@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useCrypto } from '../../context/CryptoContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutDashboard, Send, ArrowLeftRight, History, LogOut, Menu, X, Wallet, BarChart2, User, Coins } from 'lucide-react';
+import { LayoutDashboard, Send, ArrowLeftRight, History, LogOut, Menu, X, Wallet, BarChart2, User, Coins, Settings } from 'lucide-react';
 import api from '../../api/client';
 
 const Navbar = () => {
     const { user, logout } = useAuth();
+    const { connectWallet, userWallet, network } = useCrypto();
     const location = useLocation();
     const navigate = useNavigate();
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -43,6 +45,10 @@ const Navbar = () => {
         { name: 'Requests', path: '/requests', icon: ArrowLeftRight, badge: pendingCount },
         { name: 'Transactions', path: '/transactions', icon: History },
     ];
+
+    if (user?.role === 'admin') {
+        navItems.push({ name: 'Admin', path: '/admin', icon: Settings });
+    }
 
     const isActive = (path) => location.pathname === path;
 
@@ -87,7 +93,27 @@ const Navbar = () => {
                         </div>
                     </div>
 
-                    <div className="hidden md:block">
+                    <div className="hidden md:flex items-center gap-4">
+                        {/* Phase 1: MetaMask Wallet */}
+                        {userWallet ? (
+                            <div className="flex flex-col items-end">
+                                <span className="text-xs text-gray-400 font-mono">
+                                    {userWallet.substring(0, 6)}...{userWallet.substring(38)}
+                                </span>
+                                <span className="text-[10px] text-accent font-bold uppercase">
+                                    {network?.name || 'Unknown'}
+                                </span>
+                            </div>
+                        ) : (
+                            <button
+                                onClick={connectWallet}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20 text-xs font-bold hover:bg-orange-500/20 transition-colors"
+                            >
+                                <Wallet size={14} />
+                                Connect MetaMask
+                            </button>
+                        )}
+
                         <Link
                             to="/profile"
                             className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${isActive('/profile')

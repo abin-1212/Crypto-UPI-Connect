@@ -16,10 +16,12 @@ import {
   TrendingUp,
   Landmark,
   ShieldCheck,
-  RefreshCw
+  RefreshCw,
+  PlusCircle,
 } from "lucide-react";
 import { showToast } from "../utils/toast";
 import { Link } from "react-router-dom";
+import axios from "../api/client";
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -80,6 +82,12 @@ const Dashboard = () => {
     hidden: { opacity: 0, y: 20 },
     show: { opacity: 1, y: 0 }
   };
+
+  // KYC status badge
+  const [kycStatus, setKycStatus] = useState("");
+  useEffect(() => {
+    axios.get("/kyc/status").then(res => setKycStatus(res.data.kycStatus || "not-submitted")).catch(() => setKycStatus("error"));
+  }, []);
 
   return (
     <motion.div
@@ -155,10 +163,9 @@ const Dashboard = () => {
                     <button onClick={() => { navigator.clipboard.writeText(upiId); showToast.success("UPI ID Copied") }} className="hover:text-white"><Copy size={12} /></button>
                   </p>
                 </div>
-                <div className="text-right">
-                  <p className="text-gray-500 text-xs uppercase tracking-wider mb-1">Status</p>
-                  <p className="text-green-400 text-sm flex items-center gap-1 justify-end"><ShieldCheck size={14} /> Verified</p>
-                </div>
+                <Link to="/add-money" className="bg-green-500/20 text-green-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-500/30 transition-colors flex items-center gap-1">
+                  <PlusCircle size={14} /> Add Money
+                </Link>
               </div>
             </div>
           </div>
@@ -228,18 +235,25 @@ const Dashboard = () => {
         </motion.div>
       </motion.div>
 
-      {/* 3. QUICK ACTIONS */}
+      {/* 3. QUICK ACTIONS & KYC */}
       <motion.div
         variants={containerVariants}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-2 md:grid-cols-4 gap-4"
+        className="grid grid-cols-2 md:grid-cols-6 gap-4"
       >
         <Link to="/send" className="glass-card p-4 flex flex-col items-center justify-center gap-3 hover:bg-white/10 transition-all group border-blue-500/20 hover:border-blue-500/50 hover:-translate-y-1">
           <div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform shadow-lg shadow-blue-500/10">
             <Send size={24} />
           </div>
           <span className="font-medium text-white">Send Money</span>
+        </Link>
+
+        <Link to="/add-money" className="glass-card p-4 flex flex-col items-center justify-center gap-3 hover:bg-white/10 transition-all group border-green-500/20 hover:border-green-500/50 hover:-translate-y-1">
+          <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center text-green-400 group-hover:scale-110 transition-transform shadow-lg shadow-green-500/10">
+            <PlusCircle size={24} />
+          </div>
+          <span className="font-medium text-white">Add Money</span>
         </Link>
 
         <Link to="/pay-crypto" className="glass-card p-4 flex flex-col items-center justify-center gap-3 hover:bg-white/10 transition-all group border-purple-500/20 hover:border-purple-500/50 hover:-translate-y-1">
@@ -257,6 +271,14 @@ const Dashboard = () => {
         </Link>
 
         <Link to="/transactions" className="glass-card p-4 flex flex-col items-center justify-center gap-3 hover:bg-white/10 transition-all group border-emerald-500/20 hover:border-emerald-500/50 hover:-translate-y-1">
+                  {/* KYC STATUS BADGE */}
+                  <Link to="/kyc" className="glass-card p-4 flex flex-col items-center justify-center gap-3 hover:bg-white/10 transition-all group border-indigo-500/20 hover:border-indigo-500/50 hover:-translate-y-1">
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform shadow-lg shadow-indigo-500/10"
+                      style={{ background: kycStatus === "verified" ? "#22c55e" : kycStatus === "pending" ? "#eab308" : kycStatus === "rejected" ? "#ef4444" : "#6366f1" }}>
+                      <ShieldCheck size={24} />
+                    </div>
+                    <span className="font-medium text-white text-xs">KYC: {kycStatus ? kycStatus.toUpperCase() : "NOT SUBMITTED"}</span>
+                  </Link>
           <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform shadow-lg shadow-emerald-500/10">
             <TrendingUp size={24} />
           </div>

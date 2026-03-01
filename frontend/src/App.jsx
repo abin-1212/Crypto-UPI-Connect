@@ -9,11 +9,14 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import Send from "./pages/Send";
-import Requests from "./pages/Requests";
+import RequestMoney from "./components/RequestMoney";
 import Transactions from "./pages/Transactions";
 import Analytics from "./pages/Analytics";
 import Profile from "./pages/Profile";
 import CryptoPay from "./pages/CryptoPay";
+import AddMoney from "./pages/AddMoney";
+import AdminDashboard from "./pages/AdminDashboard";
+import { AdminProvider } from "./context/AdminContext";
 
 /* =========================
    Protected Route
@@ -71,7 +74,7 @@ function App() {
   const location = useLocation();
 
   return (
-    <>
+    <AdminProvider>
       <AnimatePresence mode="wait">
         <Routes location={location} key={location.pathname}>
           {/* Landing Page */}
@@ -116,7 +119,7 @@ function App() {
             path="/requests"
             element={
               <ProtectedRoute>
-                <Requests />
+                <RequestMoney />
               </ProtectedRoute>
             }
           />
@@ -152,6 +155,24 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/add-money"
+            element={
+              <ProtectedRoute>
+                <AddMoney />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Admin Route */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Catch-all */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -164,7 +185,7 @@ function App() {
           border: '1px solid rgba(255,255,255,0.1)',
         },
       }} />
-    </>
+    </AdminProvider>
   );
 }
 

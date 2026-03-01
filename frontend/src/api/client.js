@@ -21,12 +21,13 @@ api.interceptors.response.use(
   (error) => {
     const message = error.response?.data?.message || error.message || "Something went wrong";
 
-    // Handle authentication errors
+    // Handle authentication errors — clear tokens silently,
+    // let React auth state handle the redirect (no full page reload!)
     if (error.response?.status === 401) {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
-      window.location.href = "/login";
-      showToast.error("Session expired. Please login again.");
+      // Do NOT use window.location.href here — it causes full page reloads & flickering.
+      // The AuthContext / ProtectedRoute will handle redirecting to /login.
       return Promise.reject(error);
     }
 

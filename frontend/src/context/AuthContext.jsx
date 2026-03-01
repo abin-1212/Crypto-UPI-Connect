@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import api from "../api/client";
 
 const AuthContext = createContext(null);
@@ -10,13 +10,38 @@ export const AuthProvider = ({ children }) => {
     const savedUser = localStorage.getItem("user");
     return savedUser ? JSON.parse(savedUser) : null;
   });
-  const [token, setToken] = useState(localStorage.getItem("token"));
+  const [token, setToken] = useState(() => localStorage.getItem("token"));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // If token exists, we consider user authenticated.
-    // We already hydrated user from localStorage.
+    // Hydration complete — mark as not loading
     setLoading(false);
+  }, []);
+
+  // Listen for storage changes (e.g. 401 interceptor clearing token)
+  // so auth state stays in sync without a full page reload
+  useEffect(() => {
+    const handleStorage = () => {
+      const currentToken = localStorage.getItem("token");
+      const currentUser = localStorage.getItem("user");
+      if (!currentToken && token) {
+        // Token was removed externally (e.g. by 401 interceptor)
+        setToken(null);
+        setUser(null);
+      } else if (currentToken !== token) {
+        setToken(currentToken);
+        setUser(currentUser ? JSON.parse(currentUser) : null);
+      }
+    };
+
+    // Poll localStorage periodically to catch interceptor-driven removals
+    const interval = setInterval(handleStorage, 1000);
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("storage", handleStorage);
+    };
   }, [token]);
 
   /* =====================
