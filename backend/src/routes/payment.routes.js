@@ -132,148 +132,133 @@ router.get("/history", protect, async (req, res) => {
 
 /**
  * @route   POST /pay/crypto
- * @desc    Process crypto payment and record in database
+ * @desc    Record on-chain crypto transfer (ERC-20 transfer verified via txHash)
  * @access  Private
  */
 router.post("/crypto", protect, async (req, res) => {
   try {
-    console.log("💎 Processing crypto payment:", req.body);
-
     const {
       toWalletAddress,
       amount,
-      tokenType = "USDC",
+      tokenType = "cxUSDC",
       recipientUserId,
+      txHash,
       note = ""
     } = req.body;
 
     // Validate required fields
-    if (!toWalletAddress || !amount || amount <= 0 || !tokenType) {
+    if (!toWalletAddress || !amount || amount <= 0 || !txHash) {
       return res.status(400).json({
         success: false,
-        message: "Missing or invalid payment details"
+        message: "Missing or invalid payment details (toWalletAddress, amount, txHash required)"
       });
     }
 
-    // Get sender's info (using dynamic import to avoid circular dep if needed, or stick to imports at top)
+    if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+      return res.status(400).json({ success: false, message: "Invalid transaction hash" });
+    }
+
+    // Replay protection
+    const existingTx = await Transaction.findOne({ txHash });
+    if (existingTx) {
+      return res.status(409).json({
+        success: false,
+        code: "DUPLICATE_TX",
+        message: "This transaction has already been recorded"
+      });
+    }
+
     const User = (await import('../models/User.js')).default;
     const sender = await User.findById(req.user._id);
     const senderAccount = await BankAccount.findOne({ userId: req.user._id });
 
-    if (!sender || !senderAccount) {
-      return res.status(404).json({
-        success: false,
-        message: "Sender account not found"
-      });
+    if (!sender) {
+      return res.status(404).json({ success: false, message: "Sender not found" });
     }
 
-    // Get recipient's info if provided
+    // Look up recipient
     let recipient = null;
-    let recipientAccount = null;
-
     if (recipientUserId) {
       recipient = await User.findById(recipientUserId);
-      // Recipient might not have a bank account if they just joined for crypto, handle gracefully?
-      // But for now assume they do as per system design
-      recipientAccount = await BankAccount.findOne({ userId: recipientUserId });
-
-      if (!recipient) {
-        return res.status(404).json({ success: false, message: "Recipient user not found" });
-      }
     }
 
-    // Verify recipient's wallet matches IF it's a system user transfer
-    if (recipient && recipient.wallet && recipient.wallet.address &&
-      recipient.wallet.address.toLowerCase() !== toWalletAddress.toLowerCase()) {
-      // Warn but allow? Or block?
-      // Safety: If user explicitly selected a system user, ensure wallet matches
-      console.warn(`⚠️ Wallet mismatch for user ${recipient.name}. Expected ${recipient.wallet.address}, got ${toWalletAddress}`);
-    }
+    // Verify on-chain receipt
+    const { default: blockchainService } = await import('../services/blockchain.service.js');
+    const receipt = await blockchainService.getTransactionReceipt(txHash);
 
-    const txId = `CRYPTO_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const onChainStatus = receipt
+      ? (receipt.status === 1 ? "CONFIRMED" : "FAILED")
+      : "PENDING";
 
-    // 💰 Perform Atomic Balance Updates (Internal Ledger)
-    const tokenField = `cryptoBalance.${tokenType.toLowerCase()}`;
+    const currentBlock = receipt ? await blockchainService.getBlockNumber() : 0;
+    const confirmations = receipt ? currentBlock - receipt.blockNumber : 0;
+    const { BLOCK_EXPLORER } = await import('../config/contracts.js');
 
-    // 1. Deduct from Sender
-    await User.findByIdAndUpdate(
-      req.user._id,
-      { $inc: { [tokenField]: -amount } }
-    );
-
-    // 2. Add to Receiver (if internal system user)
-    if (recipient) {
-      await User.findByIdAndUpdate(
-        recipient._id,
-        { $inc: { [tokenField]: amount } }
-      );
-    }
-
-    // Create transaction record for SENDER (outgoing)
+    // Create sender transaction record
     const senderTransaction = await Transaction.create({
-      userId: req.user._id,
-      relatedUserId: recipient ? recipient._id : null,
       fromUser: req.user._id,
       toUser: recipient ? recipient._id : null,
-      fromUpi: senderAccount.upiId,
-      toUpi: recipientAccount ? recipientAccount.upiId : "EXTERNAL_WALLET",
-      fromUserName: sender.name,
-      toUserName: recipient ? recipient.name : "External Wallet",
-      amount: amount,
-      isSent: true,
-      paymentMethod: "CRYPTO",
-      tokenType: tokenType,
-      walletFrom: sender.wallet && sender.wallet.address ? sender.wallet.address : (sender.walletAddress || ""),
+      fromUpi: senderAccount?.upiId || sender.walletAddress,
+      toUpi: toWalletAddress,
+      amount,
+      paymentMethod: "BLOCKCHAIN",
+      tokenType,
+      walletFrom: sender.walletAddress || "",
       walletTo: toWalletAddress,
-      note: note || (recipient ? "" : "External Transfer"),
+      txHash,
+      blockNumber: receipt?.blockNumber,
+      confirmations,
+      gasUsed: receipt?.gasUsed?.toString(),
+      etherscanUrl: `${BLOCK_EXPLORER}/tx/${txHash}`,
+      note: note || "Crypto transfer",
       type: "CRYPTO_TRANSFER",
-      status: "COMPLETED",
-      id: `${txId}_SENT`,
-      date: new Date()
+      status: onChainStatus,
+      direction: "OUTGOING",
+      category: "CRYPTO_SENT",
+      auditTrail: [{
+        action: "TX_RECORDED",
+        details: `On-chain status: ${onChainStatus}, ${confirmations} confirmations`,
+        txHash,
+      }],
     });
 
-    // Create transaction record for RECEIVER (incoming) ONLY if system user
-    let receiverTransaction = null;
+    // Create receiver transaction if internal user
     if (recipient) {
-      // If recipient doesn't have bank account, use placeholder UPI
-      const recipientUpi = recipientAccount ? recipientAccount.upiId : "NO_UPI";
-
-      receiverTransaction = await Transaction.create({
-        userId: recipient._id,
-        relatedUserId: req.user._id,
+      await Transaction.create({
         fromUser: req.user._id,
         toUser: recipient._id,
-        fromUpi: senderAccount.upiId,
-        toUpi: recipientUpi,
-        fromUserName: sender.name,
-        toUserName: recipient.name,
-        amount: amount,
-        isSent: false,
-        paymentMethod: "CRYPTO",
-        tokenType: tokenType,
-        walletFrom: sender.wallet && sender.wallet.address ? sender.wallet.address : (sender.walletAddress || ""),
+        fromUpi: sender.walletAddress || "",
+        toUpi: toWalletAddress,
+        amount,
+        paymentMethod: "BLOCKCHAIN",
+        tokenType,
+        walletFrom: sender.walletAddress || "",
         walletTo: toWalletAddress,
-        note: note,
+        txHash,
+        blockNumber: receipt?.blockNumber,
+        confirmations,
+        etherscanUrl: `${BLOCK_EXPLORER}/tx/${txHash}`,
+        note,
         type: "CRYPTO_TRANSFER",
-        status: "COMPLETED",
-        id: `${txId}_RECEIVED`,
-        date: new Date()
+        status: onChainStatus,
+        direction: "INCOMING",
+        category: "CRYPTO_RECEIVED",
       });
     }
-
-    console.log("✅ Crypto transaction recorded");
 
     res.json({
       success: true,
-      message: "Crypto payment processed successfully",
-      transactions: {
-        sender: senderTransaction,
-        receiver: receiverTransaction
-      }
+      message: "Crypto payment recorded",
+      transaction: {
+        id: senderTransaction._id,
+        txHash,
+        status: onChainStatus,
+        confirmations,
+        etherscanUrl: `${BLOCK_EXPLORER}/tx/${txHash}`,
+      },
     });
-
   } catch (error) {
-    console.error("❌ Crypto payment processing error:", error);
+    console.error("Crypto payment error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to process crypto payment",

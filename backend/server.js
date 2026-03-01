@@ -15,6 +15,8 @@ import stripeRoutes from "./src/routes/stripe.routes.js";
 import kycRoutes from "./src/routes/kyc.routes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 import adminRoutes from "./src/routes/admin.routes.js";
+import blockchainService from "./src/services/blockchain.service.js";
+import blockchainListener from "./src/services/blockchainListener.js";
 
 
 
@@ -73,8 +75,25 @@ app.use(errorHandler);
 const startServer = async () => {
   try {
     await connectDB();
+
+    // ── Initialize Blockchain Service ──
+    try {
+      await blockchainService.init();
+      console.log("⛓️  Blockchain service initialized (Sepolia)");
+    } catch (err) {
+      console.warn("⚠️  Blockchain service init failed (will retry on first use):", err.message);
+    }
+
+    // ── Start Blockchain Event Listener ──
+    try {
+      blockchainListener.start();
+    } catch (err) {
+      console.warn("⚠️  Blockchain listener failed to start:", err.message);
+    }
+
     app.listen(PORT, () => {
       console.log(`🚀 ConvergeX Pay running on port ${PORT}`);
+      console.log(`⛓️  Chain: Sepolia (chainId 11155111)`);
     });
   } catch (error) {
     console.error("❌ Failed to start server:", error.message);

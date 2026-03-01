@@ -1,22 +1,27 @@
 import { useCrypto } from '../../context/CryptoContext';
-import { Wallet, Copy, ExternalLink, LogOut, AlertCircle } from 'lucide-react';
+import { Wallet, Copy, ExternalLink, LogOut, AlertCircle, CheckCircle, Droplets } from 'lucide-react';
 import { useState } from 'react';
 import { showToast } from '../../utils/toast';
+import EtherscanLink from '../ui/EtherscanLink';
+import { BLOCK_EXPLORER, TOKEN_ADDRESS } from '../../config/contracts';
+import api from '../../api/client';
 
 const CryptoConnect = () => {
     const {
         userWallet,
-        walletInfo,
+        walletVerified,
         isConnecting,
         cryptoBalances,
         connectWallet,
         disconnectWallet,
         checkMetaMask,
         loading,
-        userWalletId // Added from context
+        chainId,
+        fetchWalletInfo,
     } = useCrypto();
 
     const [copySuccess, setCopySuccess] = useState('');
+    const [faucetLoading, setFaucetLoading] = useState(false);
 
     const handleCopyAddress = () => {
         if (!userWallet) return;
@@ -26,26 +31,34 @@ const CryptoConnect = () => {
         setTimeout(() => setCopySuccess(''), 2000);
     };
 
-    const handleCopyId = () => {
-        if (!userWalletId) return;
-        navigator.clipboard.writeText(userWalletId);
-        setCopySuccess('Copied ID!');
-        showToast.success('Wallet ID copied: ' + userWalletId);
-        setTimeout(() => setCopySuccess(''), 2000);
-    };
-
     const formatAddress = (address) => {
         if (!address) return 'Not connected';
         return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
     };
 
-    const openInEtherscan = () => {
+    const handleFaucet = async () => {
         if (!userWallet) return;
-        window.open(`https://sepolia.etherscan.io/address/${userWallet}`, '_blank');
+        setFaucetLoading(true);
+        try {
+            // The faucet is called directly on the MockCXToken contract via MetaMask
+            const { ethers } = await import('ethers');
+            const provider = new ethers.providers.Web3Provider(window.ethereum);
+            const signer = provider.getSigner();
+            const token = new ethers.Contract(TOKEN_ADDRESS, ['function faucet() external'], signer);
+            const tx = await token.faucet();
+            showToast.success('Faucet transaction sent! Waiting for confirmation...');
+            await tx.wait();
+            showToast.success('1000 cxUSDC received!');
+            fetchWalletInfo();
+        } catch (error) {
+            showToast.error(error?.reason || error?.message || 'Faucet failed. Maybe cooldown not expired (1hr).');
+        } finally {
+            setFaucetLoading(false);
+        }
     };
 
-    // If loading and we don't have wallet info yet, show skeleton
-    if (loading && !walletInfo) {
+    // Loading skeleton
+    if (loading && !userWallet) {
         return (
             <div className="glass-card p-6">
                 <div className="animate-pulse">
@@ -70,12 +83,8 @@ const CryptoConnect = () => {
                         <p className="text-sm text-gray-400 mb-4">
                             Install MetaMask browser extension to use crypto features.
                         </p>
-                        <a
-                            href="https://metamask.io/download/"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-400 hover:text-blue-300"
-                        >
+                        <a href="https://metamask.io/download/" target="_blank" rel="noopener noreferrer"
+                            className="text-sm text-blue-400 hover:text-blue-300">
                             Install MetaMask →
                         </a>
                     </div>
@@ -91,22 +100,19 @@ const CryptoConnect = () => {
                     <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center mx-auto mb-4">
                         <Wallet size={28} className="text-purple-400" />
                     </div>
-                    <h3 className="text-lg font-medium text-white mb-2">Connect Your Wallet</h3>
+                    <h3 className="text-lg font-medium text-white mb-2">Connect & Verify Wallet</h3>
                     <p className="text-gray-400 text-sm mb-6">
-                        Link your MetaMask wallet to secure your unique Wallet ID
+                        Connect your MetaMask wallet and sign a message to verify ownership
                     </p>
-                    <button
-                        onClick={connectWallet}
-                        disabled={isConnecting}
-                        className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg hover:opacity-90 transition-all font-medium disabled:opacity-50"
-                    >
+                    <button onClick={connectWallet} disabled={isConnecting}
+                        className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg hover:opacity-90 transition-all font-medium disabled:opacity-50">
                         {isConnecting ? (
                             <span className="flex items-center justify-center gap-2">
                                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                                 Connecting...
                             </span>
                         ) : (
-                            'Connect MetaMask Wallet'
+                            'Connect & Verify MetaMask'
                         )}
                     </button>
                 </div>
@@ -119,76 +125,57 @@ const CryptoConnect = () => {
             {/* Wallet Header */}
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500/20 to-emerald-500/20 flex items-center justify-center">
-                        <Wallet size={20} className="text-green-400" />
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${walletVerified ? 'bg-gradient-to-br from-green-500/20 to-emerald-500/20' : 'bg-gradient-to-br from-yellow-500/20 to-orange-500/20'}`}>
+                        <Wallet size={20} className={walletVerified ? 'text-green-400' : 'text-yellow-400'} />
                     </div>
                     <div>
-                        <p className="text-sm text-gray-400">Your Wallet</p>
-                        <div className="flex flex-col">
-                            <span className="font-mono text-white text-sm">{formatAddress(userWallet)}</span>
-                            {userWalletId && (
-                                <span className="text-xs text-blue-400 font-mono mt-1">
-                                    ID: {userWalletId}
+                        <div className="flex items-center gap-2">
+                            <p className="text-sm text-gray-400">Your Wallet</p>
+                            {walletVerified && (
+                                <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                    <CheckCircle size={10} /> Verified
                                 </span>
                             )}
                         </div>
+                        <div className="flex items-center gap-2">
+                            <span className="font-mono text-white text-sm">{formatAddress(userWallet)}</span>
+                            <EtherscanLink address={userWallet} short />
+                        </div>
                     </div>
                 </div>
-                <button
-                    onClick={disconnectWallet}
-                    className="p-2 hover:bg-red-500/10 rounded-lg text-red-400"
-                    title="Disconnect wallet from account"
-                >
+                <button onClick={disconnectWallet}
+                    className="p-2 hover:bg-red-500/10 rounded-lg text-red-400" title="Disconnect wallet">
                     <LogOut size={18} />
                 </button>
             </div>
 
             {/* Wallet Actions */}
             <div className="flex gap-2 mb-6">
-                <button
-                    onClick={handleCopyId}
-                    className="flex-1 py-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition-all flex items-center justify-center gap-2 text-xs disabled:opacity-50"
-                    disabled={!userWalletId}
-                    title={userWalletId ? "Copy Wallet ID" : "ID not generated"}
-                >
+                <button onClick={handleCopyAddress}
+                    className="flex-1 py-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition-all flex items-center justify-center gap-2 text-xs">
                     <Copy size={14} />
-                    {copySuccess === 'Copied ID!' ? 'Copied ID' : 'Copy ID'}
+                    {copySuccess === 'Copied!' ? 'Copied!' : 'Copy Address'}
                 </button>
-                <button
-                    onClick={handleCopyAddress}
-                    className="flex-1 py-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition-all flex items-center justify-center gap-2 text-xs"
-                    title="Copy Wallet Address"
-                >
-                    <Copy size={14} />
-                    {copySuccess === 'Copied!' ? 'Copied Adr' : 'Copy Adr'}
+                <button onClick={handleFaucet} disabled={faucetLoading}
+                    className="flex-1 py-2 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-all flex items-center justify-center gap-2 text-xs disabled:opacity-50">
+                    <Droplets size={14} />
+                    {faucetLoading ? 'Claiming...' : 'Get Test Tokens'}
                 </button>
             </div>
 
-            {/* Balances */}
+            {/* On-chain Balances */}
             <div className="space-y-4">
-                <h4 className="font-medium text-white">Your Balances</h4>
+                <h4 className="font-medium text-white">On-chain Balances</h4>
                 <div className="space-y-3">
                     <div className="flex justify-between items-center">
                         <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
-                                <span className="text-blue-400 text-sm">$</span>
+                                <span className="text-blue-400 text-sm font-bold">cx</span>
                             </div>
-                            <span className="text-gray-300">USDC</span>
+                            <span className="text-gray-300">cxUSDC</span>
                         </div>
-                        <span className="text-white font-medium">
-                            {cryptoBalances.usdc.toFixed(2)} USDC
-                        </span>
-                    </div>
-
-                    <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                                <span className="text-yellow-400 text-sm">D</span>
-                            </div>
-                            <span className="text-gray-300">DAI</span>
-                        </div>
-                        <span className="text-white font-medium">
-                            {cryptoBalances.dai.toFixed(2)} DAI
+                        <span className="text-white font-medium font-mono">
+                            {(cryptoBalances?.cxUSDC || 0).toFixed(4)} cxUSDC
                         </span>
                     </div>
 
@@ -197,25 +184,25 @@ const CryptoConnect = () => {
                             <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center">
                                 <span className="text-purple-400 text-sm">Ξ</span>
                             </div>
-                            <span className="text-gray-300">ETH</span>
+                            <span className="text-gray-300">ETH (gas)</span>
                         </div>
-                        <span className="text-white font-medium">
-                            {cryptoBalances.eth.toFixed(4)} ETH
+                        <span className="text-white font-medium font-mono">
+                            {(cryptoBalances?.eth || 0).toFixed(6)} ETH
                         </span>
                     </div>
                 </div>
             </div>
 
-            {/* Connection Info */}
-            {walletInfo && (
-                <div className="mt-6 pt-6 border-t border-gray-800">
-                    <p className="text-xs text-gray-500">
-                        Connected on {new Date(walletInfo.connectedAt).toLocaleDateString()}
-                        <br />
-                        Type: {walletInfo.type}
-                    </p>
+            {/* Network Info */}
+            <div className="mt-6 pt-4 border-t border-gray-800">
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                    <span>Network: {chainId === '0xaa36a7' || chainId === 11155111 ? 'Sepolia Testnet' : `Chain ${chainId}`}</span>
+                    <a href={`${BLOCK_EXPLORER}/address/${userWallet}`} target="_blank" rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                        View on Etherscan <ExternalLink size={10} />
+                    </a>
                 </div>
-            )}
+            </div>
         </div>
     );
 };

@@ -1,6 +1,23 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
+
+/**
+ * ═══════════════════════════════════════════════════════════════
+ *  CONVERGEX — User Model (Blockchain Upgrade)
+ * ═══════════════════════════════════════════════════════════════
+ *
+ *  REMOVED: convergeXWallet.balance (crypto balances from DB)
+ *  REMOVED: walletTransactions embedded array
+ *  ADDED:   walletVerified, walletNonce (signature-based auth)
+ *
+ *  Crypto balances are now derived from on-chain state:
+ *    ERC20.balanceOf(walletAddress) via blockchain.service.js
+ *
+ *  convergeXWallet.address kept as internal platform identifier.
+ * ═══════════════════════════════════════════════════════════════
+ */
 
 const userSchema = new mongoose.Schema(
   {
@@ -12,7 +29,7 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       required: true,
-      unique: true, // index built automatically
+      unique: true,
       lowercase: true,
       trim: true,
     },
@@ -23,96 +40,73 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
-    // 🛡️ ADMIN & ROLE MANAGEMENT
+    // ─── Admin & Role Management ────────────────────────────
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user'
+      enum: ["user", "admin"],
+      default: "user",
     },
     isActive: {
-      type: Boolean, // Replacing the nested isActive inside convergeXWallet if it was meant for the user globally, or keeping both. 
-      // The user request specified isActive at root. I'll add it here.
-      default: true
+      type: Boolean,
+      default: true,
     },
-    lastLogin: {
-      type: Date
-    },
-    totalTransactions: {
-      type: Number,
-      default: 0
-    },
-    totalVolume: {
-      type: Number,
-      default: 0
-    },
+    lastLogin: { type: Date },
+    totalTransactions: { type: Number, default: 0 },
+    totalVolume: { type: Number, default: 0 },
+
+    // ─── KYC ────────────────────────────────────────────────
     kycStatus: {
       type: String,
-      enum: ['pending', 'verified', 'rejected', 'not_submitted'],
-      default: 'not_submitted'
+      enum: ["pending", "verified", "rejected", "not_submitted"],
+      default: "not_submitted",
     },
-      // Simulated KYC fields
-      panNumber: { type: String },
-      aadhaarNumber: { type: String },
-      kycVerifiedAt: { type: Date },
-      kycAttempts: { type: Number, default: 0 },
-      kycHistory: [{
+    panNumber: { type: String },
+    aadhaarNumber: { type: String },
+    kycVerifiedAt: { type: Date },
+    kycAttempts: { type: Number, default: 0 },
+    kycHistory: [
+      {
         submittedAt: Date,
         panNumber: String,
         aadhaarNumber: String,
         status: String,
         reason: String,
-      }],
+      },
+    ],
 
-    // 🔥 CONVERGEX WALLET (Built-in for every user)
+    // ─── ConvergeX Internal Identifier ──────────────────────
+    //     Kept for UPI request routing & user lookup.
+    //     NO balance fields — crypto is on-chain only.
     convergeXWallet: {
       address: {
         type: String,
         default: function () {
-          // Generate unique ConvergeX wallet address for each user
-          return `cx_${uuidv4().replace(/-/g, '').substring(0, 20)}`;
+          return `cx_${uuidv4().replace(/-/g, "").substring(0, 20)}`;
         },
-        unique: true
-      },
-      balance: {
-        usdc: { type: Number, default: 1000 },
-        dai: { type: Number, default: 500 },
-        eth: { type: Number, default: 1 }
+        unique: true,
       },
       createdAt: { type: Date, default: Date.now },
-      isActive: { type: Boolean, default: true }
     },
 
-    // 🔥 METAMASK WALLET (Optional - External)
-    metamaskWallet: {
-      address: { type: String, default: "" },
-      connectedAt: { type: Date },
-      isConnected: { type: Boolean, default: false }
-    },
-
-    // 🔥 PHASE 1: DIRECT WALLET FIELDS
+    // ─── Blockchain Wallet (MetaMask / Sepolia) ─────────────
     walletAddress: {
       type: String,
       unique: true,
-      sparse: true, // allows users without wallets
+      sparse: true, // Allows users without wallets
+    },
+    walletVerified: {
+      type: Boolean,
+      default: false,
+    },
+    walletNonce: {
+      type: String,
+      default: () => crypto.randomBytes(16).toString("hex"),
     },
     walletType: {
       type: String,
       enum: ["METAMASK"],
     },
-    walletConnectedAt: {
-      type: Date,
-    },
-
-    // All wallet transactions
-    walletTransactions: [{
-      type: { type: String, enum: ["DEPOSIT", "WITHDRAWAL", "TRANSFER"] },
-      fromWallet: String,
-      toWallet: String,
-      amount: Number,
-      token: String,
-      timestamp: { type: Date, default: Date.now },
-      status: { type: String, enum: ["PENDING", "COMPLETED", "FAILED"], default: "COMPLETED" }
-    }]
+    walletConnectedAt: { type: Date },
   },
   { timestamps: true }
 );
@@ -130,6 +124,13 @@ userSchema.pre("save", async function () {
  */
 userSchema.methods.comparePassword = async function (plainPassword) {
   return bcrypt.compare(plainPassword, this.password);
+};
+
+/**
+ * Rotate wallet nonce (call after successful verification)
+ */
+userSchema.methods.rotateNonce = function () {
+  this.walletNonce = crypto.randomBytes(16).toString("hex");
 };
 
 const User = mongoose.model("User", userSchema);

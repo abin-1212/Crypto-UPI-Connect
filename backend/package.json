@@ -12,6 +12,7 @@
     "dotenv": "^17.2.3",
     "ethers": "^5.7.2",
     "express": "^4.22.1",
+    "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.2",
     "stripe": "^20.3.1",

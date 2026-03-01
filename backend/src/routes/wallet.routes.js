@@ -1,480 +1,414 @@
+/**
+ * ═══════════════════════════════════════════════════════════════
+ *  CONVERGEX — Wallet Routes (Blockchain Upgrade)
+ * ═══════════════════════════════════════════════════════════════
+ *
+ *  REMOVED: Fake crypto balances, DB-only transfers
+ *  ADDED:   Signature-based wallet auth, on-chain balance queries,
+ *           gas estimation, token faucet
+ *
+ *  Crypto balance = ERC20.balanceOf(walletAddress) on Sepolia
+ * ═══════════════════════════════════════════════════════════════
+ */
+
 import express from "express";
 import { protect } from "../middleware/auth.middleware.js";
+import { requireVerifiedWallet } from "../middleware/walletVerify.middleware.js";
+import { validate } from "../middleware/validate.js";
+import { walletVerifySchema } from "../validations/schemas.js";
 import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 import BankAccount from "../models/BankAccount.js";
-import { getExchangeRate, getAllRates, forceRefreshRates, getMarketData } from "../utils/conversion.js";
+import blockchainService from "../services/blockchain.service.js";
+import BlockchainService from "../services/blockchain.service.js";
+import {
+  getExchangeRate,
+  getAllRates,
+  forceRefreshRates,
+  getMarketData,
+} from "../utils/conversion.js";
+import { SEPOLIA_CHAIN_ID, BLOCK_EXPLORER } from "../config/contracts.js";
 
 const router = express.Router();
 
-/**
- * GET /wallet/rates — Live exchange rates + market data (powered by CoinGecko)
- */
+// ═══════════════════════════════════════════════════════════════
+//  EXCHANGE RATES (unchanged — CoinGecko)
+// ═══════════════════════════════════════════════════════════════
+
 router.get("/rates", async (req, res) => {
-    try {
-        const rates = await forceRefreshRates();
-        const marketData = getMarketData();
-        res.json({
-            success: true,
-            source: "CoinGecko",
-            rates,
-            marketData,
-            updatedAt: new Date().toISOString(),
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Failed to fetch rates" });
-    }
+  try {
+    const rates = await forceRefreshRates();
+    const marketData = getMarketData();
+    res.json({
+      success: true,
+      source: "CoinGecko",
+      rates,
+      marketData,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to fetch rates" });
+  }
 });
 
+// ═══════════════════════════════════════════════════════════════
+//  PHASE 1: WALLET NONCE (for signature auth)
+// ═══════════════════════════════════════════════════════════════
+
 /**
- * Get user's ConvergeX Wallet info
+ * GET /wallet/nonce
+ * Returns a nonce for the authenticated user to sign with MetaMask.
  */
+router.get("/nonce", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("walletNonce walletAddress walletVerified");
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    const message = BlockchainService.generateSignMessage(user.walletNonce);
+
+    res.json({
+      success: true,
+      nonce: user.walletNonce,
+      message,
+      walletAddress: user.walletAddress || null,
+      walletVerified: user.walletVerified || false,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to get nonce" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  PHASE 1: WALLET VERIFICATION (Signature-based)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * POST /wallet/verify
+ * Verify wallet ownership via signed message.
+ */
+router.post(
+  "/verify",
+  protect,
+  validate(walletVerifySchema),
+  async (req, res) => {
+    try {
+      const { walletAddress, signature } = req.body;
+
+      const user = await User.findById(req.user._id).select(
+        "walletNonce walletAddress walletVerified"
+      );
+      if (!user) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      const expectedMessage = BlockchainService.generateSignMessage(
+        user.walletNonce
+      );
+
+      const isValid = blockchainService.verifySignatureMatches(
+        expectedMessage,
+        signature,
+        walletAddress
+      );
+
+      if (!isValid) {
+        return res.status(401).json({
+          success: false,
+          message: "Signature verification failed. Address does not match.",
+        });
+      }
+
+      // Check if another user already has this wallet
+      const existingUser = await User.findOne({
+        walletAddress: { $regex: new RegExp(`^${walletAddress}$`, "i") },
+        _id: { $ne: req.user._id },
+      });
+
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: "This wallet is already linked to another account.",
+        });
+      }
+
+      user.walletAddress = walletAddress;
+      user.walletVerified = true;
+      user.walletType = "METAMASK";
+      user.walletConnectedAt = new Date();
+      user.rotateNonce();
+      await user.save();
+
+      res.json({
+        success: true,
+        message: "Wallet verified and linked successfully",
+        walletAddress,
+        walletVerified: true,
+      });
+    } catch (error) {
+      console.error("Wallet verify error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Wallet verification failed",
+      });
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════
+//  WALLET INFO (On-chain balance)
+// ═══════════════════════════════════════════════════════════════
+
+router.get("/info", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select(
+      "name email convergeXWallet walletAddress walletVerified walletConnectedAt"
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    let onChainBalance = "0";
+    let ethBalance = "0";
+
+    if (user.walletAddress && user.walletVerified) {
+      try {
+        onChainBalance = await blockchainService.getTokenBalance(user.walletAddress);
+        ethBalance = await blockchainService.getEthBalance(user.walletAddress);
+      } catch (err) {
+        console.warn("On-chain balance fetch failed:", err.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      wallet: {
+        convergeXAddress: user.convergeXWallet?.address,
+        walletAddress: user.walletAddress || null,
+        walletVerified: user.walletVerified || false,
+        connectedAt: user.walletConnectedAt,
+      },
+      balances: { cxUSDC: onChainBalance, eth: ethBalance },
+      chain: {
+        chainId: SEPOLIA_CHAIN_ID,
+        name: "Sepolia",
+        explorer: BLOCK_EXPLORER,
+        tokenAddress: process.env.MOCK_TOKEN_ADDRESS || null,
+        escrowAddress: process.env.ESCROW_CONTRACT_ADDRESS || null,
+      },
+      user: { id: user._id, name: user.name, email: user.email },
+    });
+  } catch (error) {
+    console.error("Wallet info error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch wallet info" });
+  }
+});
+
+/** GET /wallet/convergex  (backward compat) */
 router.get("/convergex", protect, async (req, res) => {
-    try {
-        const user = await User.findById(req.user._id).select(
-            "convergeXWallet name email"
-        );
+  try {
+    const user = await User.findById(req.user._id).select(
+      "convergeXWallet name email walletAddress walletVerified"
+    );
 
-        // Ensure wallet exists (migration safe)
-        if (!user.convergeXWallet || !user.convergeXWallet.address) {
-            // Auto-generate if missing
-            user.convergeXWallet = {
-                address: `cx_${Date.now()}${Math.random().toString(36).substr(2, 9)}`, // Fallback generation if Schema default didn't trigger
-                balance: { usdc: 1000, dai: 500, eth: 1 }
-            };
-            await user.save();
-        }
-
-        res.json({
-            success: true,
-            wallet: user.convergeXWallet,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email
-            }
-        });
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({
-            success: false,
-            message: "Failed to fetch ConvergeX Wallet"
-        });
+    let onChainBalance = "0";
+    if (user.walletAddress && user.walletVerified) {
+      try {
+        onChainBalance = await blockchainService.getTokenBalance(user.walletAddress);
+      } catch {}
     }
+
+    res.json({
+      success: true,
+      wallet: {
+        address: user.convergeXWallet?.address,
+        walletAddress: user.walletAddress,
+        walletVerified: user.walletVerified,
+        balance: {
+          cxUSDC: parseFloat(onChainBalance) || 0,
+          usdc: parseFloat(onChainBalance) || 0,
+          dai: 0, eth: 0,
+        },
+      },
+      user: { id: user._id, name: user.name, email: user.email },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to fetch wallet" });
+  }
 });
 
-/**
- * Transfer between ConvergeX Wallets
- */
-router.post("/convergex/transfer", protect, async (req, res) => {
-    try {
-        const { toWalletAddress, amount, token } = req.body;
+// ═══════════════════════════════════════════════════════════════
+//  ON-CHAIN BALANCE QUERY
+// ═══════════════════════════════════════════════════════════════
 
-        // Validation
-        if (!toWalletAddress || !amount || !token) {
-            return res.status(400).json({
-                success: false,
-                message: "Missing required fields"
-            });
-        }
-
-        if (amount <= 0) {
-            return res.status(400).json({
-                success: false,
-                message: "Amount must be positive"
-            });
-        }
-
-        // Get sender
-        const sender = await User.findById(req.user._id);
-        if (!sender) {
-            return res.status(404).json({
-                success: false,
-                message: "Sender not found"
-            });
-        }
-
-        // Check if sending to self
-        if (sender.convergeXWallet.address === toWalletAddress) {
-            return res.status(400).json({
-                success: false,
-                message: "Cannot send to your own wallet"
-            });
-        }
-
-        // Check sender balance
-        const senderBalance = sender.convergeXWallet.balance[token.toLowerCase()] || 0;
-        if (amount > senderBalance) {
-            return res.status(400).json({
-                success: false,
-                message: `Insufficient ${token} balance`
-            });
-        }
-
-        // Find recipient
-        const recipient = await User.findOne({
-            "convergeXWallet.address": toWalletAddress
-        });
-
-        if (!recipient) {
-            return res.status(404).json({
-                success: false,
-                message: "Recipient ConvergeX Wallet not found"
-            });
-        }
-
-        // Perform transfer
-        // 1. Deduct from sender
-        sender.convergeXWallet.balance[token.toLowerCase()] -= amount;
-
-        // 2. Add to recipient
-        recipient.convergeXWallet.balance[token.toLowerCase()] += amount;
-
-        // 3. Record transaction for sender
-        sender.walletTransactions.push({
-            type: "TRANSFER",
-            fromWallet: sender.convergeXWallet.address,
-            toWallet: recipient.convergeXWallet.address,
-            amount: -amount, // Negative for sender
-            token: token.toUpperCase(),
-            status: "COMPLETED"
-        });
-
-        // 4. Record transaction for recipient
-        recipient.walletTransactions.push({
-            type: "TRANSFER",
-            fromWallet: sender.convergeXWallet.address,
-            toWallet: recipient.convergeXWallet.address,
-            amount: amount, // Positive for recipient
-            token: token.toUpperCase(),
-            status: "COMPLETED"
-        });
-
-        // 5. Save both users
-        await sender.save();
-        await recipient.save();
-
-        // 6. Create main transaction records (for Transactions page)
-        const senderTransaction = await Transaction.create({
-            userId: sender._id,
-            fromUser: sender._id,
-            toUser: recipient._id,
-            fromUpi: sender.convergeXWallet.address,
-            toUpi: recipient.convergeXWallet.address,
-            amount: amount,
-            paymentMethod: "CONVERGEX_WALLET",
-            tokenType: token.toUpperCase(),
-            walletFrom: sender.convergeXWallet.address,
-            walletTo: recipient.convergeXWallet.address,
-            note: `ConvergeX Wallet transfer`,
-            type: "CRYPTO_TRANSFER",
-            status: "COMPLETED",
-            transactionId: `CX_${Date.now()}_${sender._id.toString().substr(-6)}`,
-            direction: "OUTGOING",
-            category: "CRYPTO_SENT"
-        });
-
-        const recipientTransaction = await Transaction.create({
-            userId: recipient._id,
-            fromUser: sender._id,
-            toUser: recipient._id,
-            fromUpi: sender.convergeXWallet.address,
-            toUpi: recipient.convergeXWallet.address,
-            amount: amount,
-            paymentMethod: "CONVERGEX_WALLET",
-            tokenType: token.toUpperCase(),
-            walletFrom: sender.convergeXWallet.address,
-            walletTo: recipient.convergeXWallet.address,
-            note: `ConvergeX Wallet transfer`,
-            type: "CRYPTO_TRANSFER",
-            status: "COMPLETED",
-            transactionId: `CX_${Date.now()}_${recipient._id.toString().substr(-6)}`,
-            direction: "INCOMING",
-            category: "CRYPTO_RECEIVED"
-        });
-
-        res.json({
-            success: true,
-            message: "Transfer successful",
-            transfer: {
-                from: sender.convergeXWallet.address,
-                to: recipient.convergeXWallet.address,
-                amount,
-                token,
-                transactionId: senderTransaction.transactionId
-            },
-            senderBalance: sender.convergeXWallet.balance,
-            recipientName: recipient.name
-        });
-
-    } catch (error) {
-        console.error("Transfer error:", error);
-        res.status(500).json({
-            success: false,
-            message: "Transfer failed",
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
-        });
+router.get("/balance/:address", async (req, res) => {
+  try {
+    const { address } = req.params;
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      return res.status(400).json({ success: false, message: "Invalid address" });
     }
+
+    const cxUSDC = await blockchainService.getTokenBalance(address);
+    const eth = await blockchainService.getEthBalance(address);
+
+    res.json({ success: true, address, balances: { cxUSDC, eth }, chain: "sepolia" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Balance query failed" });
+  }
 });
 
-/**
- * Link MetaMask wallet (public address only) - NEW PHASE 1 ROUTE
- */
-router.post("/connect", protect, async (req, res) => {
-    try {
-        const { walletAddress } = req.body;
+// ═══════════════════════════════════════════════════════════════
+//  GAS ESTIMATION
+// ═══════════════════════════════════════════════════════════════
 
-        if (!walletAddress) {
-            return res.status(400).json({ message: "Wallet address required" });
-        }
-
-        await User.findByIdAndUpdate(req.user._id, {
-            walletAddress,
-            walletType: "METAMASK",
-            walletConnectedAt: new Date(),
-        });
-
-        res.json({
-            success: true,
-            walletAddress,
-        });
-    } catch (err) {
-        res.status(500).json({ message: "Failed to connect wallet" });
-    }
+router.get("/gas-estimate", protect, async (req, res) => {
+  try {
+    const { amount = "100", offchainId = "test" } = req.query;
+    const estimate = await blockchainService.estimateLockGas(amount, offchainId);
+    res.json({ success: true, ...estimate });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Gas estimation failed" });
+  }
 });
 
-/**
- * Connect MetaMask wallet (OLD - Deprecated but kept for safety)
- */
-router.post("/metamask/connect", protect, async (req, res) => {
-    try {
-        const { walletAddress } = req.body;
+// ═══════════════════════════════════════════════════════════════
+//  ESCROW INFO
+// ═══════════════════════════════════════════════════════════════
 
-        // Update user with MetaMask address
-        await User.findByIdAndUpdate(req.user._id, {
-            $set: {
-                metamaskWallet: {
-                    address: walletAddress,
-                    connectedAt: new Date(),
-                    isConnected: true
-                }
-            }
-        });
-
-        res.json({
-            success: true,
-            message: "MetaMask wallet connected"
-        });
-
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: "Failed to connect MetaMask"
-        });
-    }
+router.get("/escrow", async (req, res) => {
+  try {
+    const escrowBalance = await blockchainService.getEscrowBalance();
+    res.json({
+      success: true,
+      escrow: {
+        address: process.env.ESCROW_CONTRACT_ADDRESS,
+        tokenBalance: escrowBalance,
+        tokenAddress: process.env.MOCK_TOKEN_ADDRESS,
+        chain: "sepolia",
+        explorer: `${BLOCK_EXPLORER}/address/${process.env.ESCROW_CONTRACT_ADDRESS}`,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Escrow info fetch failed" });
+  }
 });
 
-/**
- * Find user by ConvergeX Wallet address OR MetaMask Address
- */
+// ═══════════════════════════════════════════════════════════════
+//  USER LOOKUP
+// ═══════════════════════════════════════════════════════════════
+
 router.get("/find-by-address/:walletAddress", async (req, res) => {
-    try {
-        // Search in both ConvergeX wallet and new MetaMask walletAddress
-        const user = await User.findOne({
-            $or: [
-                { "convergeXWallet.address": req.params.walletAddress },
-                { "walletAddress": new RegExp(`^${req.params.walletAddress}$`, "i") }
-            ]
-        }).select("name email convergeXWallet walletAddress");
+  try {
+    const user = await User.findOne({
+      $or: [
+        { "convergeXWallet.address": req.params.walletAddress },
+        { walletAddress: new RegExp(`^${req.params.walletAddress}$`, "i") },
+      ],
+    }).select("name email convergeXWallet walletAddress walletVerified");
 
-        if (!user) {
-            return res.json({
-                success: true,
-                found: false,
-                message: "Wallet not found"
-            });
-        }
-
-        res.json({
-            success: true,
-            found: true,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                wallet: user.convergeXWallet,
-                walletAddress: user.walletAddress
-            }
-        });
-
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: "Failed to find wallet"
-        });
+    if (!user) {
+      return res.json({ success: true, found: false, message: "Wallet not found" });
     }
+
+    res.json({
+      success: true,
+      found: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        convergeXAddress: user.convergeXWallet?.address,
+        walletAddress: user.walletAddress,
+        walletVerified: user.walletVerified,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "User lookup failed" });
+  }
 });
 
-/**
- * Convert UPI (Bank) to Crypto (ConvergeX Wallet)
- */
-router.post("/convert/upi-to-crypto", protect, async (req, res) => {
-    try {
-        const { amount, token } = req.body; // Amount in INR
+// ═══════════════════════════════════════════════════════════════
+//  BLOCKCHAIN TX STATUS
+// ═══════════════════════════════════════════════════════════════
 
-        if (!amount || amount <= 0 || !token) {
-            return res.status(400).json({ success: false, message: "Invalid amount or token" });
-        }
-
-        const user = await User.findById(req.user._id);
-        const bankAccount = await BankAccount.findOne({ userId: req.user._id });
-
-        if (!bankAccount) {
-            return res.status(404).json({ success: false, message: "Bank account not found" });
-        }
-
-        if (bankAccount.balance < amount) {
-            return res.status(400).json({ success: false, message: "Insufficient bank balance" });
-        }
-
-        // Live Exchange Rate from CoinGecko (via conversion utility)
-        let rate;
-        try {
-            rate = getExchangeRate(token);
-        } catch (err) {
-            return res.status(400).json({ success: false, message: err.message });
-        }
-
-        const cryptoAmount = amount / rate;
-
-        // 1. Deduct INR
-        bankAccount.balance -= amount;
-        await bankAccount.save();
-
-        // 2. Add Crypto
-        user.convergeXWallet.balance[token.toLowerCase()] = (user.convergeXWallet.balance[token.toLowerCase()] || 0) + cryptoAmount;
-
-        // 3. Record Crypto Transaction
-        user.walletTransactions.push({
-            type: "DEPOSIT",
-            fromWallet: "UPI_BANK",
-            toWallet: user.convergeXWallet.address,
-            amount: cryptoAmount,
-            token: token.toUpperCase(),
-            status: "COMPLETED"
-        });
-        await user.save();
-
-        // 4. Record Main Transaction (for dashboard consistency)
-        await Transaction.create({
-            userId: user._id,
-            fromUser: user._id,
-            toUser: user._id, // Self
-            fromUpi: bankAccount.upiId,
-            toUpi: user.convergeXWallet.address,
-            amount: amount,
-            paymentMethod: "UPI",
-            tokenType: token.toUpperCase(),
-            note: `Converted ₹${amount} to ${cryptoAmount.toFixed(4)} ${token}`,
-            type: "CRYPTO_TRANSFER",
-            status: "COMPLETED",
-            category: "CONVERSION",
-            direction: "OUTGOING" // Money left bank
-        });
-
-        res.json({
-            success: true,
-            message: `Successfully converted ₹${amount} to ${cryptoAmount.toFixed(4)} ${token}`,
-            newBankBalance: bankAccount.balance,
-            newCryptoBalance: user.convergeXWallet.balance
-        });
-
-    } catch (error) {
-        console.error("Conversion error:", error);
-        res.status(500).json({ success: false, message: "Conversion failed" });
+router.get("/tx-status/:txHash", async (req, res) => {
+  try {
+    const { txHash } = req.params;
+    if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+      return res.status(400).json({ success: false, message: "Invalid tx hash" });
     }
+
+    const receipt = await blockchainService.getTransactionReceipt(txHash);
+
+    if (!receipt) {
+      return res.json({
+        success: true,
+        status: "PENDING",
+        message: "Transaction not yet mined",
+      });
+    }
+
+    const currentBlock = await blockchainService.getBlockNumber();
+    const confirmations = currentBlock - receipt.blockNumber;
+
+    res.json({
+      success: true,
+      status: receipt.status === 1 ? "SUCCESS" : "REVERTED",
+      txHash,
+      blockNumber: receipt.blockNumber,
+      confirmations,
+      gasUsed: receipt.gasUsed.toString(),
+      etherscanUrl: `${BLOCK_EXPLORER}/tx/${txHash}`,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "TX status query failed" });
+  }
 });
 
-/**
- * Convert Crypto (ConvergeX Wallet) to UPI (Bank)
- */
-router.post("/convert/crypto-to-upi", protect, async (req, res) => {
-    try {
-        const { amount, token } = req.body; // Amount in Crypto
+// ═══════════════════════════════════════════════════════════════
+//  CHAIN CONFIG (for frontend)
+// ═══════════════════════════════════════════════════════════════
 
-        if (!amount || amount <= 0 || !token) {
-            return res.status(400).json({ success: false, message: "Invalid amount or token" });
-        }
+router.get("/chain-config", (req, res) => {
+  res.json({
+    success: true,
+    chainId: SEPOLIA_CHAIN_ID,
+    chainName: "Sepolia",
+    rpcUrl: "https://rpc.sepolia.org",
+    explorer: BLOCK_EXPLORER,
+    contracts: {
+      token: process.env.MOCK_TOKEN_ADDRESS || null,
+      escrow: process.env.ESCROW_CONTRACT_ADDRESS || null,
+    },
+  });
+});
 
-        const user = await User.findById(req.user._id);
-        const bankAccount = await BankAccount.findOne({ userId: req.user._id });
+// ═══════════════════════════════════════════════════════════════
+//  LEGACY WALLET CONNECT (backward compat — unverified)
+// ═══════════════════════════════════════════════════════════════
 
-        if (!bankAccount) {
-            return res.status(404).json({ success: false, message: "Bank account not found" });
-        }
-
-        const cryptoBalance = user.convergeXWallet.balance[token.toLowerCase()] || 0;
-        if (cryptoBalance < amount) {
-            return res.status(400).json({ success: false, message: `Insufficient ${token} balance` });
-        }
-
-        // Live Exchange Rate from CoinGecko (via conversion utility)
-        let rate;
-        try {
-            rate = getExchangeRate(token);
-        } catch (err) {
-            return res.status(400).json({ success: false, message: err.message });
-        }
-
-        const inrAmount = amount * rate;
-
-        // 1. Deduct Crypto
-        user.convergeXWallet.balance[token.toLowerCase()] -= amount;
-
-        // 2. Record Crypto Transaction
-        user.walletTransactions.push({
-            type: "WITHDRAWAL",
-            fromWallet: user.convergeXWallet.address,
-            toWallet: "UPI_BANK",
-            amount: -amount,
-            token: token.toUpperCase(),
-            status: "COMPLETED"
-        });
-        await user.save();
-
-        // 3. Add INR
-        bankAccount.balance += inrAmount;
-        await bankAccount.save();
-
-        // 4. Record Main Transaction
-        await Transaction.create({
-            userId: user._id,
-            fromUser: user._id,
-            toUser: user._id,
-            fromUpi: user.convergeXWallet.address,
-            toUpi: bankAccount.upiId,
-            amount: inrAmount,
-            paymentMethod: "CONVERGEX_WALLET",
-            tokenType: token.toUpperCase(),
-            note: `Converted ${amount} ${token} to ₹${inrAmount.toFixed(2)}`,
-            type: "CRYPTO_TRANSFER",
-            status: "COMPLETED",
-            category: "CONVERSION",
-            direction: "INCOMING" // Money entered bank
-        });
-
-        res.json({
-            success: true,
-            message: `Successfully converted ${amount} ${token} to ₹${inrAmount.toFixed(2)}`,
-            newBankBalance: bankAccount.balance,
-            newCryptoBalance: user.convergeXWallet.balance
-        });
-
-    } catch (error) {
-        console.error("Conversion error:", error);
-        res.status(500).json({ success: false, message: "Conversion failed" });
+router.post("/connect", protect, async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    if (!walletAddress) {
+      return res.status(400).json({ message: "Wallet address required" });
     }
+
+    await User.findByIdAndUpdate(req.user._id, {
+      walletAddress,
+      walletType: "METAMASK",
+      walletConnectedAt: new Date(),
+    });
+
+    res.json({
+      success: true,
+      walletAddress,
+      walletVerified: false,
+      message: "Wallet connected. Sign verification message to complete setup.",
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to connect wallet" });
+  }
 });
 
 export default router;

@@ -135,6 +135,11 @@ router.post("/verify-session", protect, async (req, res) => {
         stripePaymentIntent: session.payment_intent,
         gateway: "stripe",
       },
+      auditTrail: [
+        { action: "STRIPE_CHECKOUT_CREATED", details: `Session: ${sessionId}` },
+        { action: "PAYMENT_VERIFIED", details: `Amount: ₹${amountInRupees}, Intent: ${session.payment_intent}` },
+        { action: "BALANCE_CREDITED", details: `New balance: ₹${bankAccount.balance}` },
+      ],
     });
     await transaction.save();
 
