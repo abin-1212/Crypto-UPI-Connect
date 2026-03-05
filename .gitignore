@@ -28,3 +28,7 @@ key
 
 # Package lock files (optional - uncomment if you want to track them)
 # package-lock.json
+
+# Smart contract build artifacts
+backend/smart-contracts/artifacts/
+backend/smart-contracts/cache/

@@ -15,6 +15,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useCrypto } from "../context/CryptoContext";
 
 /* ==============================================
    Main AddMoney Page — Stripe Checkout (hosted)
@@ -22,6 +23,7 @@ import { Link } from "react-router-dom";
 const PRESET_AMOUNTS = [100, 500, 1000, 2000, 5000, 10000];
 
 const AddMoney = () => {
+  const { refreshAllData } = useCrypto();
   const [step, setStep] = useState("amount"); // amount | verifying | success
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
@@ -34,27 +36,41 @@ const AddMoney = () => {
     const cancelled = params.get("cancelled");
 
     if (sessionId) {
+      // Clean URL immediately so refresh won't re-trigger verification
+      window.history.replaceState({}, "", "/add-money");
       verifySession(sessionId);
     } else if (cancelled) {
       showToast.error("Payment was cancelled");
-      // Clean URL
       window.history.replaceState({}, "", "/add-money");
     }
   }, []);
 
-  const verifySession = async (sessionId) => {
+  const verifySession = async (sessionId, retryCount = 0) => {
     setStep("verifying");
     try {
-      const res = await api.post("/stripe/verify-session", { sessionId });
+      // Suppress interceptor toasts — we handle errors ourselves here
+      const res = await api.post(
+        "/stripe/verify-session",
+        { sessionId },
+        { _suppressToast: true, timeout: 30000 }
+      );
       setSuccessData(res.data);
       setStep("success");
       showToast.success(res.data.message || "Money added successfully!");
-      // Clean URL
-      window.history.replaceState({}, "", "/add-money");
+      // Sync global balance state so Dashboard/Navbar show updated data
+      refreshAllData();
     } catch (err) {
-      showToast.error(err.response?.data?.message || "Payment verification failed");
+      // Retry up to 2 times for network/timeout errors
+      const isNetworkError = !err.response;
+      if (isNetworkError && retryCount < 2) {
+        console.log(`⟳ Retrying verification (attempt ${retryCount + 2})...`);
+        await new Promise((r) => setTimeout(r, 2000));
+        return verifySession(sessionId, retryCount + 1);
+      }
+      showToast.error(
+        err.response?.data?.message || "Payment verification failed. Please contact support if money was deducted."
+      );
       setStep("amount");
-      window.history.replaceState({}, "", "/add-money");
     }
   };
 
@@ -71,15 +87,18 @@ const AddMoney = () => {
 
     setLoading(true);
     try {
-      const res = await api.post("/stripe/create-checkout-session", {
-        amount: num,
-      });
+      const res = await api.post(
+        "/stripe/create-checkout-session",
+        { amount: num },
+        { _suppressToast: true }
+      );
 
       // Redirect to Stripe's hosted checkout page
       if (res.data.url) {
         window.location.href = res.data.url;
       } else {
         showToast.error("Failed to get checkout URL");
+        setLoading(false);
       }
     } catch (err) {
       showToast.error(err.response?.data?.message || "Failed to initiate payment");

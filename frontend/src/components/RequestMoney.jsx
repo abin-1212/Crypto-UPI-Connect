@@ -1,12 +1,13 @@
 import React, { useState, useContext, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext'; // Updated import
-import api from '../api/client'; // Updated import
+import { useAuth } from '../context/AuthContext';
+import { useCrypto } from '../context/CryptoContext';
+import api from '../api/client';
 import './RequestMoney.css';
-import { ArrowLeftRight, User, Clock, CheckCircle, XCircle } from 'lucide-react'; // Added icons for better UI
+import { ArrowLeftRight, User, Clock, CheckCircle, XCircle } from 'lucide-react';
 
-// Using useAuth hook instead of useContext(AuthContext) to match project style
 const RequestMoney = () => {
     const { user } = useAuth();
+    const { refreshAllData } = useCrypto();
     const [activeTab, setActiveTab] = useState('create');
     const [formData, setFormData] = useState({
         amount: '',
@@ -78,6 +79,8 @@ const RequestMoney = () => {
             await api.post(`/api/requests/${requestId}/pay`);
             alert('Payment successful!');
             fetchIncomingRequests();
+            // Sync global balance state so Dashboard shows updated data
+            refreshAllData();
         } catch (error) {
             alert(error.response?.data?.error || error.response?.data?.message || 'Payment failed');
         }

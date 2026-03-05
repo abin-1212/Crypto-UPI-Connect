@@ -3,7 +3,7 @@ import { showToast } from "../utils/toast";
 
 const api = axios.create({
   baseURL: "http://localhost:5000",
-  timeout: 10000,
+  timeout: 15000,
 });
 
 // Request interceptor - add JWT token
@@ -19,6 +19,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // If the caller wants to handle toasts itself, skip interceptor toasts
+    const suppressToast = error.config?._suppressToast;
+
     const message = error.response?.data?.message || error.message || "Something went wrong";
 
     // Handle authentication errors — clear tokens silently,
@@ -26,26 +29,30 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
-      // Do NOT use window.location.href here — it causes full page reloads & flickering.
-      // The AuthContext / ProtectedRoute will handle redirecting to /login.
       return Promise.reject(error);
     }
 
     // Handle network errors
     if (!error.response) {
-      showToast.error("Network error. Please check your connection.");
+      if (!suppressToast) {
+        showToast.error("Network error. Please check your connection.");
+      }
       return Promise.reject(error);
     }
 
     // Handle client errors (400-499) except 401
     if (error.response.status >= 400 && error.response.status < 500) {
-      showToast.error(message);
+      if (!suppressToast) {
+        showToast.error(message);
+      }
       return Promise.reject(error);
     }
 
     // Handle server errors (500+)
     if (error.response.status >= 500) {
-      showToast.error("Server error. Please try again later.");
+      if (!suppressToast) {
+        showToast.error("Server error. Please try again later.");
+      }
       return Promise.reject(error);
     }
 

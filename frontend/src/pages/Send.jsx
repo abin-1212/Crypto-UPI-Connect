@@ -1,17 +1,72 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { pageVariants } from '../lib/animations';
 import api from '../api/client';
 import { showToast } from '../utils/toast';
 import AnimatedButton from '../components/ui/AnimatedButton';
 import MoneyInput from '../components/ui/MoneyInput';
-import { Send as SendIcon, CheckCircle, AlertCircle } from 'lucide-react';
+import {
+  Send as SendIcon,
+  CheckCircle,
+  AlertCircle,
+  CreditCard,
+  Wallet,
+  Loader2,
+  ExternalLink,
+  ArrowRight,
+} from 'lucide-react';
+import { useCrypto } from '../context/CryptoContext';
 
 const Send = () => {
+  const { refreshAllData } = useCrypto();
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
-  const [status, setStatus] = useState('idle'); // idle | review | processing | success | error
+  const [status, setStatus] = useState('idle'); // idle | review | processing | success | error | verifying
   const [message, setMessage] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('wallet'); // wallet | stripe
+
+  // On mount, check if returning from Stripe Send checkout
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session_id');
+    const cancelled = params.get('cancelled');
+
+    if (sessionId) {
+      window.history.replaceState({}, '', '/send');
+      verifySendSession(sessionId);
+    } else if (cancelled) {
+      showToast.error('Payment was cancelled');
+      window.history.replaceState({}, '', '/send');
+    }
+  }, []);
+
+  // Verify Stripe send session after returning from checkout
+  const verifySendSession = async (sessionId, retryCount = 0) => {
+    setStatus('verifying');
+    try {
+      const res = await api.post(
+        '/stripe/verify-send-session',
+        { sessionId },
+        { _suppressToast: true, timeout: 30000 }
+      );
+      setStatus('success');
+      setMessage(res.data.message || 'Payment sent successfully!');
+      showToast.success(res.data.message || 'Money sent successfully!');
+      // Sync global balance state so Dashboard shows updated data
+      refreshAllData();
+    } catch (err) {
+      const isNetworkError = !err.response;
+      if (isNetworkError && retryCount < 2) {
+        console.log(`⟳ Retrying send verification (attempt ${retryCount + 2})...`);
+        await new Promise((r) => setTimeout(r, 2000));
+        return verifySendSession(sessionId, retryCount + 1);
+      }
+      showToast.error(
+        err.response?.data?.message || 'Payment verification failed. Please contact support if money was deducted.'
+      );
+      setStatus('idle');
+    }
+  };
 
   const initiateSend = (e) => {
     e.preventDefault();
@@ -24,9 +79,10 @@ const Send = () => {
       return;
     }
     setStatus('review');
-  }
+  };
 
-  const handleConfirmSend = async () => {
+  // Send via wallet balance (existing method)
+  const handleWalletSend = async () => {
     setStatus('processing');
     setMessage('');
 
@@ -39,13 +95,51 @@ const Send = () => {
       setStatus('success');
       setMessage('Payment successful!');
       showToast.success(`₹${Number(amount).toLocaleString('en-IN')} sent successfully to ${recipient}`);
+      // Sync global balance state so Dashboard shows updated data
+      refreshAllData();
       setRecipient('');
       setAmount('');
     } catch (error) {
       setStatus('error');
       const errorMessage = error.response?.data?.message || 'Payment failed. Please check UPI ID and balance.';
       setMessage(errorMessage);
-      // Error toast is already shown by the API interceptor
+    }
+  };
+
+  // Send via Stripe checkout
+  const handleStripeSend = async () => {
+    setStatus('processing');
+    setMessage('');
+
+    try {
+      const res = await api.post(
+        '/stripe/create-send-checkout-session',
+        {
+          amount: Number(amount),
+          toUpiId: recipient,
+        },
+        { _suppressToast: true }
+      );
+
+      if (res.data.url) {
+        window.location.href = res.data.url;
+      } else {
+        showToast.error('Failed to get checkout URL');
+        setStatus('review');
+      }
+    } catch (err) {
+      setStatus('error');
+      const errorMessage = err.response?.data?.message || 'Failed to initiate Stripe payment';
+      setMessage(errorMessage);
+      showToast.error(errorMessage);
+    }
+  };
+
+  const handleConfirmSend = () => {
+    if (paymentMethod === 'stripe') {
+      handleStripeSend();
+    } else {
+      handleWalletSend();
     }
   };
 
@@ -69,13 +163,26 @@ const Send = () => {
             <div>
               <h2 className="text-2xl font-bold text-white">Send Money</h2>
               <p className="text-gray-400">
-                Instant UPI transfers to anyone
+                Instant transfers to anyone
               </p>
             </div>
           </div>
 
           <AnimatePresence mode="wait">
-            {status === 'success' ? (
+            {/* ─── Verifying Stripe Payment ───────────────── */}
+            {status === 'verifying' ? (
+              <motion.div
+                key="verifying"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="text-center py-12"
+              >
+                <Loader2 size={48} className="animate-spin text-accent mx-auto mb-4" />
+                <h3 className="text-xl font-bold text-white mb-2">Verifying Payment...</h3>
+                <p className="text-gray-400">Please wait while we confirm your payment</p>
+              </motion.div>
+            ) : status === 'success' ? (
               <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -90,7 +197,13 @@ const Send = () => {
                 </h3>
                 <p className="text-gray-400 mb-8 max-w-xs mx-auto">{message}</p>
                 <AnimatedButton
-                  onClick={() => setStatus('idle')}
+                  onClick={() => {
+                    setStatus('idle');
+                    setRecipient('');
+                    setAmount('');
+                    setMessage('');
+                    setPaymentMethod('wallet');
+                  }}
                   className="w-full max-w-xs mx-auto"
                 >
                   Send Another Payment
@@ -120,19 +233,66 @@ const Send = () => {
                   </div>
                 </div>
 
+                {/* Payment Method Selector */}
+                <div>
+                  <p className="text-sm text-gray-400 mb-3 uppercase tracking-wider">
+                    Payment Method
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('wallet')}
+                      className={`flex items-center gap-3 p-4 rounded-xl border transition-all ${
+                        paymentMethod === 'wallet'
+                          ? 'bg-accent/10 border-accent/50 text-accent'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      <Wallet size={20} />
+                      <div className="text-left">
+                        <p className="text-sm font-medium">Wallet Balance</p>
+                        <p className="text-xs opacity-60">Pay from balance</p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('stripe')}
+                      className={`flex items-center gap-3 p-4 rounded-xl border transition-all ${
+                        paymentMethod === 'stripe'
+                          ? 'bg-green-500/10 border-green-500/50 text-green-400'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      <CreditCard size={20} />
+                      <div className="text-left">
+                        <p className="text-sm font-medium">Card / Stripe</p>
+                        <p className="text-xs opacity-60">Pay via card</p>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="pt-2 flex gap-3">
                   <AnimatedButton
                     variant="secondary"
                     onClick={() => setStatus('idle')}
                     className="flex-1"
+                    disabled={status === 'processing'}
                   >
                     Back
                   </AnimatedButton>
                   <AnimatedButton
                     onClick={handleConfirmSend}
+                    loading={status === 'processing'}
                     className="flex-[2]"
                   >
-                    Confirm & Pay
+                    {paymentMethod === 'stripe' ? (
+                      <>
+                        Pay via Stripe <ExternalLink size={16} />
+                      </>
+                    ) : (
+                      'Confirm & Pay'
+                    )}
                   </AnimatedButton>
                 </div>
               </motion.div>

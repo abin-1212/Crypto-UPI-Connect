@@ -1,7 +1,6 @@
-console.log("🔥 RUNNING CONVERGEX PAY SERVER.JS 🔥");
+import "./src/config/env.js"; // Must be first — loads .env before any other module
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import connectDB from "./src/config/db.js";
 import authRoutes from "./src/routes/auth.routes.js";
 import bankRoutes from "./src/routes/bank.routes.js";
@@ -20,8 +19,6 @@ import blockchainListener from "./src/services/blockchainListener.js";
 
 
 
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -68,6 +65,16 @@ app.use("/kyc", kycRoutes);
 ===================== */
 app.use(errorHandler);
 
+
+/* =====================
+   Global Safety Net — prevent server crashes from unhandled errors
+===================== */
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Uncaught Exception (server kept alive):', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ Unhandled Rejection (server kept alive):', reason);
+});
 
 /* =====================
    Start Server

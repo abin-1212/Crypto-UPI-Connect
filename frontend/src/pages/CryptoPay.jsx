@@ -22,8 +22,9 @@ import {
     ArrowLeftRight,
     Zap,
     ExternalLink,
+    Droplets,
 } from 'lucide-react';
-import { BLOCK_EXPLORER } from '../config/contracts';
+import { BLOCK_EXPLORER, TOKEN_ADDRESS } from '../config/contracts';
 
 const CryptoPay = () => {
     const {
@@ -58,6 +59,27 @@ const CryptoPay = () => {
     } = useCrypto();
 
     const [activeTab, setActiveTab] = useState('send');
+    const [faucetLoading, setFaucetLoading] = useState(false);
+
+    const handleFaucet = async () => {
+        if (faucetLoading) return;
+        setFaucetLoading(true);
+        try {
+            const { ethers } = await import('ethers');
+            const provider = new ethers.providers.Web3Provider(window.ethereum);
+            const signer = provider.getSigner();
+            const token = new ethers.Contract(TOKEN_ADDRESS, ['function faucet() external'], signer);
+            const tx = await token.faucet();
+            showToast.success('Faucet transaction sent! Waiting for confirmation...');
+            await tx.wait();
+            showToast.success('1000 cxUSDC received!');
+            fetchWalletInfo();
+        } catch (error) {
+            showToast.error(error?.reason || error?.message || 'Faucet failed. Maybe cooldown not expired (1hr).');
+        } finally {
+            setFaucetLoading(false);
+        }
+    };
 
     // Send Form State
     const [sendForm, setSendForm] = useState({
@@ -317,6 +339,30 @@ const CryptoPay = () => {
                         className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-500 transition-colors"
                     >
                         {isConnecting ? 'Connecting...' : 'Connect'}
+                    </button>
+                </div>
+            )}
+
+            {/* Wallet Balance & Faucet */}
+            {walletVerified && (
+                <div className="glass-card p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="text-sm">
+                            <span className="text-gray-400">cxUSDC: </span>
+                            <span className="text-white font-mono font-bold">{(cryptoBalances.cxUSDC || 0).toFixed(4)}</span>
+                        </div>
+                        <div className="text-sm">
+                            <span className="text-gray-400">ETH: </span>
+                            <span className="text-white font-mono">{(cryptoBalances.eth || 0).toFixed(5)}</span>
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleFaucet}
+                        disabled={faucetLoading}
+                        className="flex items-center gap-2 px-3 py-2 bg-purple-600/20 text-purple-400 rounded-lg text-sm font-medium hover:bg-purple-600/30 transition-colors disabled:opacity-50"
+                    >
+                        <Droplets size={14} />
+                        {faucetLoading ? 'Claiming...' : 'Get Test Tokens'}
                     </button>
                 </div>
             )}

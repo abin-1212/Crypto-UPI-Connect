@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import api from '../api/client';
 import { showToast } from '../utils/toast';
+import { toast } from 'react-hot-toast';
 import { ethers } from 'ethers';
 import detectEthereumProvider from '@metamask/detect-provider';
 import { useAuth } from './AuthContext';
@@ -66,6 +67,27 @@ export const CryptoProvider = ({ children }) => {
     // Contract helpers
     const [walletInfo, setWalletInfo] = useState(null);
 
+    // Session-level flag: persisted in sessionStorage so it survives Stripe
+    // redirects (full page reloads) but resets when the browser tab closes.
+    // This prevents auto-restoring wallet state from backend on fresh login
+    // while keeping MetaMask connected across Stripe payment flows.
+    const getSessionVerified = () => sessionStorage.getItem('cx_wallet_verified') === 'true';
+    const setSessionVerified = (val) => {
+        if (val) {
+            sessionStorage.setItem('cx_wallet_verified', 'true');
+        } else {
+            sessionStorage.removeItem('cx_wallet_verified');
+        }
+    };
+
+    // Guard: true while connectWallet() is running.
+    // Blocks the accountsChanged event listener from polluting state mid-flow.
+    const isConnectingRef = useRef(false);
+
+    // Guard: true while a blockchain TX is pending (approve/lock/transfer).
+    // Prevents accountsChanged from disconnecting wallet during TX confirmation.
+    const txPendingRef = useRef(false);
+
     // ═══════════════════════════════════════
     //  METAMASK DETECTION
     // ═══════════════════════════════════════
@@ -82,25 +104,37 @@ export const CryptoProvider = ({ children }) => {
             const response = await api.get('/wallet/info');
             if (response.data.success) {
                 const { wallet, balances, chain } = response.data;
-                setUserWallet(wallet.walletAddress);
-                setWalletVerified(wallet.walletVerified);
+
+                // Always set the convergeX internal wallet ID
                 setUserWalletId(wallet.convergeXAddress);
-                setMetamaskWallet(wallet.walletAddress);
-                setWalletInfo({
-                    connectedAt: wallet.connectedAt,
-                    type: 'METAMASK',
-                });
-
-                setCryptoBalances({
-                    cxUSDC: parseFloat(balances.cxUSDC) || 0,
-                    eth: parseFloat(balances.eth) || 0,
-                });
-
-                // Legacy compat
                 setConvergeXWallet({ address: wallet.convergeXAddress });
-                const cxBal = parseFloat(balances.cxUSDC) || 0;
-                setConvergeXBalances({ usdc: cxBal, cxUSDC: cxBal, dai: 0, eth: 0 });
-                setMetamaskBalances({ usdc: cxBal, cxUSDC: cxBal, dai: 0, eth: 0 });
+
+                // ONLY restore MetaMask wallet state if the user explicitly
+                // connected MetaMask in THIS browser session (via connectWallet).
+                // Uses sessionStorage so it survives Stripe redirects (page reloads)
+                // but resets when the browser tab is closed.
+                if (getSessionVerified() && wallet.walletAddress) {
+                    setUserWallet(wallet.walletAddress);
+                    setWalletVerified(true);
+                    setMetamaskWallet(wallet.walletAddress);
+                    setWalletInfo({ connectedAt: wallet.connectedAt, type: 'METAMASK' });
+                    setCryptoBalances({
+                        cxUSDC: parseFloat(balances.cxUSDC) || 0,
+                        eth: parseFloat(balances.eth) || 0,
+                    });
+                    const cxBal = parseFloat(balances.cxUSDC) || 0;
+                    setConvergeXBalances({ usdc: cxBal, cxUSDC: cxBal, dai: 0, eth: 0 });
+                    setMetamaskBalances({ usdc: cxBal, cxUSDC: cxBal, dai: 0, eth: 0 });
+                } else {
+                    // Not connected this session — always show "Not Connected"
+                    setUserWallet(null);
+                    setWalletVerified(false);
+                    setMetamaskWallet(null);
+                    setWalletInfo(null);
+                    setCryptoBalances({ cxUSDC: 0, eth: 0 });
+                    setConvergeXBalances({});
+                    setMetamaskBalances({});
+                }
             }
         } catch (error) {
             console.error('Failed to fetch wallet info:', error);
@@ -159,15 +193,35 @@ export const CryptoProvider = ({ children }) => {
 
         try {
             setIsConnecting(true);
+            isConnectingRef.current = true;
 
-            // 1. Request accounts
-            const accounts = await provider.request({ method: 'eth_requestAccounts' });
-            if (!accounts.length) throw new Error('No accounts found');
+            // 1. Force MetaMask to show the account picker EVERY time
+            //    wallet_requestPermissions re-prompts even if already connected,
+            //    so the user always picks the correct account for this ConvergeX user.
+            try {
+                await provider.request({
+                    method: 'wallet_requestPermissions',
+                    params: [{ eth_accounts: {} }],
+                });
+            } catch (permErr) {
+                // User rejected the account picker
+                if (permErr.code === 4001) {
+                    showToast.error('Account selection cancelled');
+                    return false;
+                }
+                // Fallback: some wallets don't support wallet_requestPermissions
+                console.warn('wallet_requestPermissions not supported, falling back', permErr);
+            }
+
+            // 2. Now fetch the selected account
+            const accounts = await provider.request({ method: 'eth_accounts' });
+            if (!accounts.length) throw new Error('No accounts found. Please select an account in MetaMask.');
             const walletAddress = accounts[0];
+            console.log('[WALLET CONNECT] selected account:', walletAddress);
 
-            // 2. Check network
-            const ethProvider = new ethers.providers.Web3Provider(provider);
-            const net = await ethProvider.getNetwork();
+            // 3. Check network and switch to Sepolia if needed
+            let ethProvider = new ethers.providers.Web3Provider(provider);
+            let net = await ethProvider.getNetwork();
             setNetwork(net);
             setChainId(net.chainId);
 
@@ -187,29 +241,52 @@ export const CryptoProvider = ({ children }) => {
                         throw switchErr;
                     }
                 }
+                // Re-create provider after network switch
+                ethProvider = new ethers.providers.Web3Provider(provider);
+                net = await ethProvider.getNetwork();
+                setNetwork(net);
+                setChainId(net.chainId);
             }
 
-            // 3. Get nonce from backend
+            // 4. Get nonce from backend
             const nonceRes = await api.get('/wallet/nonce');
-            const { message } = nonceRes.data;
+            const { message, nonce: serverNonce } = nonceRes.data;
+            console.log('[WALLET CONNECT] nonce:', serverNonce);
 
-            // 4. Sign message
+            // 5. Sign message — re-create provider to ensure signer matches selected account
+            ethProvider = new ethers.providers.Web3Provider(provider);
             const signer = ethProvider.getSigner();
-            const signature = await signer.signMessage(message);
+            const signerAddr = await signer.getAddress();
+            console.log('[WALLET CONNECT] signer address:', signerAddr);
 
-            // 5. Verify with backend
+            // Safety check: signer must match the account we selected
+            if (signerAddr.toLowerCase() !== walletAddress.toLowerCase()) {
+                throw new Error(
+                    `MetaMask is signing with ${signerAddr.substring(0,10)}… but you selected ${walletAddress.substring(0,10)}…. ` +
+                    `Please switch to the correct account in MetaMask and try again.`
+                );
+            }
+
+            const signature = await signer.signMessage(message);
+            console.log('[WALLET CONNECT] signature obtained, verifying...');
+
+            // 6. Verify with backend
             const verifyRes = await api.post('/wallet/verify', {
                 walletAddress,
                 signature,
             });
 
             if (verifyRes.data.success) {
+                // Mark session as verified BEFORE fetchWalletInfo
+                // Stored in sessionStorage so it survives Stripe page reloads
+                setSessionVerified(true);
+
                 setUserWallet(walletAddress);
                 setMetamaskWallet(walletAddress);
                 setWalletVerified(true);
                 showToast.success('Wallet verified and connected!');
 
-                // Refresh wallet info
+                // Now fetch on-chain balances (sessionVerifiedRef is true so it will load)
                 await fetchWalletInfo();
                 return true;
             } else {
@@ -217,14 +294,27 @@ export const CryptoProvider = ({ children }) => {
             }
         } catch (error) {
             console.error('Wallet connection error:', error);
+
+            // ALWAYS reset wallet state on ANY failure (409, signature reject, etc.)
+            setSessionVerified(false);
+            setUserWallet(null);
+            setMetamaskWallet(null);
+            setWalletVerified(false);
+            setCryptoBalances({ cxUSDC: 0, eth: 0 });
+            setConvergeXBalances({});
+            setMetamaskBalances({});
+            setWalletInfo(null);
+
             if (error.code === 4001) {
                 showToast.error('Signature rejected by user');
             } else {
-                showToast.error(error.message || 'Failed to connect wallet');
+                const msg = error?.response?.data?.message || error.message || 'Failed to connect wallet';
+                showToast.error(msg);
             }
             return false;
         } finally {
             setIsConnecting(false);
+            isConnectingRef.current = false;
         }
     }, [fetchWalletInfo]);
 
@@ -234,10 +324,13 @@ export const CryptoProvider = ({ children }) => {
     //  DISCONNECT WALLET
     // ═══════════════════════════════════════
     const disconnectWallet = useCallback(() => {
+        setSessionVerified(false);
         setUserWallet(null);
         setMetamaskWallet(null);
         setWalletVerified(false);
         setCryptoBalances({ cxUSDC: 0, eth: 0 });
+        setConvergeXBalances({});
+        setMetamaskBalances({});
         setWalletInfo(null);
         showToast.success('Wallet disconnected');
     }, []);
@@ -258,8 +351,10 @@ export const CryptoProvider = ({ children }) => {
         const offchainId = generateOffchainId();
 
         setTxPending(true);
+        txPendingRef.current = true;
         setLastTxStatus('APPROVING');
 
+        let loadingToastId;
         try {
             // Step 1: Check allowance
             const currentAllowance = await tokenContract.allowance(
@@ -267,15 +362,16 @@ export const CryptoProvider = ({ children }) => {
             );
 
             if (currentAllowance.lt(amountWei)) {
-                showToast.loading('Approve cxUSDC spending...');
+                loadingToastId = showToast.loading('Approve cxUSDC spending...');
                 const approveTx = await tokenContract.approve(ESCROW_ADDRESS, amountWei);
                 await approveTx.wait(1);
+                toast.dismiss(loadingToastId);
                 showToast.success('Token approved!');
             }
 
             // Step 2: Lock tokens in escrow
             setLastTxStatus('LOCKING');
-            showToast.loading('Locking tokens in escrow...');
+            loadingToastId = showToast.loading('Locking tokens in escrow...');
             const lockTx = await escrowContract.lockForUPI(amountWei, offchainId);
             const receipt = await lockTx.wait(1);
             const txHash = receipt.transactionHash;
@@ -283,7 +379,8 @@ export const CryptoProvider = ({ children }) => {
             setLastTxStatus('PENDING');
 
             // Step 3: Send to backend for settlement
-            showToast.loading('Verifying on-chain...');
+            toast.dismiss(loadingToastId);
+            loadingToastId = showToast.loading('Verifying on-chain...');
             const response = await api.post('/pay/crypto-to-upi', {
                 txHash,
                 offchainId,
@@ -292,19 +389,23 @@ export const CryptoProvider = ({ children }) => {
                 receiverUpiId,
             });
 
+            toast.dismiss(loadingToastId);
             if (response.data.success) {
                 setLastTxStatus('SETTLED');
                 showToast.success(response.data.message);
                 await fetchWalletInfo();
+                await fetchBankBalance();
                 return response.data;
             } else {
                 throw new Error(response.data.message);
             }
         } catch (error) {
             setLastTxStatus('FAILED');
+            if (loadingToastId) toast.dismiss(loadingToastId);
             throw error;
         } finally {
             setTxPending(false);
+            txPendingRef.current = false;
         }
     }, [walletVerified, fetchWalletInfo]);
 
@@ -314,6 +415,7 @@ export const CryptoProvider = ({ children }) => {
     const hybridUpiToCrypto = useCallback(async (receiverWalletAddress, inrAmount, token = 'cxUSDC') => {
         try {
             setTxPending(true);
+            txPendingRef.current = true;
             setLastTxStatus('PENDING');
 
             const response = await api.post('/pay/upi-to-crypto', {
@@ -328,6 +430,7 @@ export const CryptoProvider = ({ children }) => {
                 setBankBalance(response.data.data?.senderBankBalance ?? bankBalance - parseFloat(inrAmount));
                 showToast.success(response.data.message);
                 await fetchWalletInfo();
+                await fetchBankBalance();
                 return response.data;
             } else {
                 throw new Error(response.data.message);
@@ -337,6 +440,7 @@ export const CryptoProvider = ({ children }) => {
             throw error;
         } finally {
             setTxPending(false);
+            txPendingRef.current = false;
         }
     }, [bankBalance, fetchWalletInfo]);
 
@@ -353,10 +457,12 @@ export const CryptoProvider = ({ children }) => {
         const amountWei = ethers.utils.parseEther(amount.toString());
 
         setTxPending(true);
+        txPendingRef.current = true;
         setLastTxStatus('PENDING');
 
+        let loadingToastId;
         try {
-            showToast.loading('Sending tokens...');
+            loadingToastId = showToast.loading('Sending tokens...');
             const tx = await tokenContract.transfer(toAddress, amountWei);
             const receipt = await tx.wait(1);
             const txHash = receipt.transactionHash;
@@ -371,14 +477,17 @@ export const CryptoProvider = ({ children }) => {
             });
 
             setLastTxStatus('CONFIRMED');
+            toast.dismiss(loadingToastId);
             showToast.success(`Sent ${amount} ${token}`);
             await fetchWalletInfo();
             return { txHash, blockNumber: receipt.blockNumber };
         } catch (error) {
             setLastTxStatus('FAILED');
+            if (loadingToastId) toast.dismiss(loadingToastId);
             throw error;
         } finally {
             setTxPending(false);
+            txPendingRef.current = false;
         }
     }, [walletVerified, fetchWalletInfo]);
 
@@ -443,13 +552,24 @@ export const CryptoProvider = ({ children }) => {
         if (!window.ethereum) return;
 
         const handleAccountsChanged = (accounts) => {
+            // CRITICAL: Do NOT update wallet state while connectWallet() is running
+            // or while a blockchain TX is pending (approve/lock/transfer).
+            // wallet_requestPermissions and TX confirmations trigger this event.
+            if (isConnectingRef.current || txPendingRef.current) return;
+
             if (accounts.length === 0) {
                 disconnectWallet();
-            } else if (accounts[0].toLowerCase() !== userWallet?.toLowerCase()) {
-                setUserWallet(accounts[0]);
-                setMetamaskWallet(accounts[0]);
+            } else if (walletVerified && accounts[0].toLowerCase() !== userWallet?.toLowerCase()) {
+                // Only warn about account change if wallet was previously verified
+                setSessionVerified(false);
+                setUserWallet(null);
+                setMetamaskWallet(null);
                 setWalletVerified(false);
-                showToast('Wallet changed. Please re-verify.');
+                setCryptoBalances({ cxUSDC: 0, eth: 0 });
+                setConvergeXBalances({});
+                setMetamaskBalances({});
+                setWalletInfo(null);
+                showToast.error('MetaMask account changed. Please reconnect your wallet.');
             }
         };
 
@@ -478,6 +598,8 @@ export const CryptoProvider = ({ children }) => {
             const rateInterval = setInterval(fetchExchangeRates, 60_000);
             return () => clearInterval(rateInterval);
         } else {
+            // User logged out — reset ALL crypto state + session flag
+            setSessionVerified(false);
             setConvergeXWallet(null);
             setConvergeXBalances({});
             setBankBalance(0);
@@ -486,9 +608,29 @@ export const CryptoProvider = ({ children }) => {
             setUserWallet(null);
             setWalletVerified(false);
             setCryptoBalances({ cxUSDC: 0, eth: 0 });
+            setMetamaskBalances({});
+            setWalletInfo(null);
             setLoading(false);
+
+            // Best-effort: revoke MetaMask permissions for fresh account picker
+            if (window.ethereum) {
+                window.ethereum.request({
+                    method: 'wallet_revokePermissions',
+                    params: [{ eth_accounts: {} }],
+                }).catch(() => {});
+            }
         }
     }, [token, fetchWalletInfo, fetchBankBalance, fetchExchangeRates]);
+
+    // ═══════════════════════════════════════
+    //  REFRESH ALL DATA — call from any page after payments
+    // ═══════════════════════════════════════
+    const refreshAllData = useCallback(async () => {
+        await Promise.all([
+            fetchBankBalance(),
+            fetchWalletInfo(),
+        ]);
+    }, [fetchBankBalance, fetchWalletInfo]);
 
     return (
         <CryptoContext.Provider value={{
@@ -529,6 +671,7 @@ export const CryptoProvider = ({ children }) => {
             getActiveBalances,
             getActiveWalletAddress,
             checkMetaMask,
+            refreshAllData,
 
             // Phase 1 compat
             userWallet,

@@ -124,9 +124,13 @@ router.post('/:requestId/pay', protect, async (req, res) => {
     const senderUser = await User.findById(req.user._id);
     const senderBank = await BankAccount.findOne({ userId: req.user._id });
 
+    // Recipient is the person who CREATED the request (fromUserId)
+    const recipientBank = await BankAccount.findOne({ userId: request.fromUserId });
+
     // Handle payment based on method
-    if (request.paymentMethod === 'UPI') {
-      // Deduct from bank balance
+    if (request.paymentMethod === 'UPI' || request.paymentMethod === 'CONVERGEX_WALLET' || request.paymentMethod === 'METAMASK') {
+      // All request payments go through fiat bank balance (on-chain crypto
+      // requests would need MetaMask signing which isn't handled here)
       if (!senderBank) {
         return res.status(404).json({ error: 'Bank account not found' });
       }
@@ -137,32 +141,9 @@ router.post('/:requestId/pay', protect, async (req, res) => {
       await senderBank.save();
 
       // Credit recipient
-      // Need recipient's BankAccount
-      // Logic: request.fromUserId is the requester (recipient of funds)
-      const recipientBank = await BankAccount.findOne({ userId: request.fromUserId });
       if (recipientBank) {
         recipientBank.balance += request.amount;
         await recipientBank.save();
-      }
-
-    } else if (request.paymentMethod === 'CONVERGEX_WALLET') {
-      // Deduct from crypto balance
-      const currencyKey = request.currency.toLowerCase(); // usdc, dai, eth
-      if (!senderUser.convergeXWallet.balance || senderUser.convergeXWallet.balance[currencyKey] === undefined) {
-        return res.status(400).json({ error: `Invalid currency ${request.currency}` });
-      }
-
-      if (senderUser.convergeXWallet.balance[currencyKey] < request.amount) {
-        return res.status(400).json({ error: `Insufficient ${request.currency} balance` });
-      }
-      senderUser.convergeXWallet.balance[currencyKey] -= request.amount;
-      await senderUser.save();
-
-      // Credit recipient
-      const recipientUser = await User.findById(request.fromUserId);
-      if (recipientUser) {
-        recipientUser.convergeXWallet.balance[currencyKey] += request.amount;
-        await recipientUser.save();
       }
     }
 
@@ -171,31 +152,43 @@ router.post('/:requestId/pay', protect, async (req, res) => {
     request.paidAt = new Date();
     await request.save();
 
-    // Create transaction record
-    // Note: Transaction model might require specific fields.
-    // User provided generic code: new Transaction({...})
-    // Our Transaction.js has: paymentMethod, tokenType, walletFrom, walletTo, direction, category, amount.
-
+    // Create transaction record with correct schema fields
     const transaction = new Transaction({
-      userId: req.user._id,
-      type: 'PAYMENT',
+      fromUser: req.user._id,
+      toUser: request.fromUserId,
+      fromUpi: senderBank?.upiId || '',
+      toUpi: recipientBank?.upiId || request.toUPI || '',
       amount: request.amount,
-      // Mapping fields to our schema
-      tokenType: request.paymentMethod === 'CONVERGEX_WALLET' ? request.currency : undefined,
-      paymentMethod: request.paymentMethod,
-      category: 'REQUEST_PAYMENT', // Custom category
-      description: `Paid request: ${request.description}`,
+      type: 'REQUEST_ACCEPTED',
       status: 'COMPLETED',
-      // Allow for internal transfer tracking if needed
-      walletFrom: request.paymentMethod === 'CONVERGEX_WALLET' ? senderUser.convergeXWallet.address : senderBank?.upiId,
-      walletTo: request.paymentMethod === 'CONVERGEX_WALLET' ? (await User.findById(request.fromUserId))?.convergeXWallet?.address : 'RECIPIENT_UPI', // Simplified
-      direction: 'OUTGOING'
+      paymentMethod: 'UPI',
+      description: `Paid request: ${request.description || 'Payment request'}`,
+      category: 'REQUEST_PAYMENT',
+      direction: 'OUTGOING',
+      note: request.description || '',
     });
     await transaction.save();
 
+    // Also create the incoming transaction for the requester
+    await Transaction.create({
+      fromUser: req.user._id,
+      toUser: request.fromUserId,
+      fromUpi: senderBank?.upiId || '',
+      toUpi: recipientBank?.upiId || request.toUPI || '',
+      amount: request.amount,
+      type: 'REQUEST_ACCEPTED',
+      status: 'COMPLETED',
+      paymentMethod: 'UPI',
+      description: `Received payment for: ${request.description || 'Payment request'}`,
+      category: 'REQUEST_PAYMENT',
+      direction: 'INCOMING',
+      note: request.description || '',
+    });
+
     res.json({
       success: true,
-      message: 'Payment completed successfully'
+      message: 'Payment completed successfully',
+      newBalance: senderBank?.balance,
     });
   } catch (error) {
     console.error("Pay Request Error:", error);

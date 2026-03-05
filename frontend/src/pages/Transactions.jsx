@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import api from "../api/client";
 import { showToast } from "../utils/toast";
-import { Download, Coins } from "lucide-react";
+import { Download, Coins, CreditCard, ArrowUpRight, ArrowDownLeft, Landmark, ArrowLeftRight, PlusCircle } from "lucide-react";
 
 function Transactions() {
   const [transactions, setTransactions] = useState([]);
@@ -179,135 +179,101 @@ function Transactions() {
                 </thead>
                 <tbody>
                   {filteredTransactions.map((tx) => {
-                    // Check if crypto
-                    const isCrypto = tx.paymentMethod === 'CRYPTO' || tx.type === 'CRYPTO_TRANSFER';
-                    const isIncoming = tx.isSent === false;
+                    // Determine transaction category for display
+                    const isDeposit = tx.type === 'DEPOSIT';
+                    const isCrypto = tx.paymentMethod === 'BLOCKCHAIN' || tx.type === 'CRYPTO_TRANSFER';
+                    const isHybrid = tx.type === 'CRYPTO_TO_UPI' || tx.type === 'UPI_TO_CRYPTO';
+                    const isStripe = tx.paymentMethod === 'STRIPE' && !isDeposit;
+                    const isIncoming = !tx.isSent;
 
-                    if (isCrypto) {
-                      return (
-                        <motion.tr
-                          key={tx.id || tx._id}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          className="border-b border-gray-700 hover:bg-gray-750 bg-purple-900/10"
-                        >
-                          <td className="p-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full flex items-center justify-center bg-purple-900/40 text-purple-400">
-                                <Coins size={20} />
-                              </div>
-                              <div>
-                                <p className="font-medium text-purple-200">
-                                  {isIncoming ? "Received Crypto" : "Sent Crypto"}
-                                </p>
-                                <p className="text-sm text-gray-400">
-                                  {isIncoming
-                                    ? `From: ${tx.fromUserName || 'Unknown'}`
-                                    : `To: ${tx.toUserName || 'Unknown'}`
-                                  }
-                                </p>
-                                <p className="text-xs text-purple-400/70 font-mono">
-                                  {tx.tokenType || 'USDC'}
-                                </p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <p className="text-gray-300">{formatDate(tx.date || tx.createdAt)}</p>
-                          </td>
-                          <td className="p-4">
-                            <p className={`font-semibold ${isIncoming ? "text-green-400" : "text-white"}`}>
-                              {isIncoming ? "+" : "-"} {Math.abs(tx.amount)} {tx.tokenType || 'USDC'}
-                            </p>
-                          </td>
-                          <td className="p-4">
-                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-900/30 text-green-400">
-                              Completed
-                            </span>
-                          </td>
-                        </motion.tr>
-                      );
+                    // Choose icon & colors based on type
+                    let icon, iconBg, iconColor, label, sublabel, amountColor, amountPrefix;
+
+                    if (isDeposit) {
+                      icon = <PlusCircle size={20} />;
+                      iconBg = 'bg-green-900/30';
+                      iconColor = 'text-green-400';
+                      label = 'Added Money';
+                      sublabel = `via ${tx.paymentMethod === 'STRIPE' ? 'Stripe' : 'Deposit'}`;
+                      amountColor = 'text-green-400';
+                      amountPrefix = '+';
+                    } else if (isCrypto || isHybrid) {
+                      icon = <Coins size={20} />;
+                      iconBg = isIncoming ? 'bg-purple-900/30' : 'bg-purple-900/40';
+                      iconColor = 'text-purple-400';
+                      if (tx.type === 'CRYPTO_TO_UPI') {
+                        label = isIncoming ? 'Received (Crypto→UPI)' : 'Sent (Crypto→UPI)';
+                      } else if (tx.type === 'UPI_TO_CRYPTO') {
+                        label = isIncoming ? 'Received (UPI→Crypto)' : 'Sent (UPI→Crypto)';
+                      } else {
+                        label = isIncoming ? 'Received Crypto' : 'Sent Crypto';
+                      }
+                      sublabel = isIncoming
+                        ? `From: ${tx.fromUserName || tx.fromUpi || 'Unknown'}`
+                        : `To: ${tx.toUserName || tx.toUpi || 'Unknown'}`;
+                      amountColor = isIncoming ? 'text-green-400' : 'text-white';
+                      amountPrefix = isIncoming ? '+' : '-';
+                    } else {
+                      // UPI / Stripe send / Request payment
+                      icon = tx.isSent ? <ArrowUpRight size={20} /> : <ArrowDownLeft size={20} />;
+                      iconBg = tx.isSent ? 'bg-red-900/30' : 'bg-green-900/30';
+                      iconColor = tx.isSent ? 'text-red-400' : 'text-green-400';
+                      label = tx.isSent
+                        ? `To: ${tx.toUserName || tx.toUpi || 'Unknown'}`
+                        : `From: ${tx.fromUserName || tx.fromUpi || 'Unknown'}`;
+                      sublabel = tx.isSent ? (tx.toUpi || '') : (tx.fromUpi || '');
+                      if (isStripe) sublabel += ' (via Stripe)';
+                      if (tx.type === 'REQUEST_ACCEPTED') sublabel = 'Request payment';
+                      amountColor = tx.isSent ? 'text-red-400' : 'text-green-400';
+                      amountPrefix = tx.isSent ? '-' : '+';
                     }
 
-                    // UPI Transaction
+                    // Status badge
+                    const statusColor = {
+                      COMPLETED: 'bg-green-900/30 text-green-400',
+                      SETTLED: 'bg-green-900/30 text-green-400',
+                      CONFIRMED: 'bg-green-900/30 text-green-400',
+                      PENDING: 'bg-yellow-900/30 text-yellow-400',
+                      FAILED: 'bg-red-900/30 text-red-400',
+                    }[tx.status] || 'bg-gray-700 text-gray-300';
+
+                    // Display amount — for crypto show token, for fiat show ₹
+                    const displayAmount = (isCrypto && !isHybrid)
+                      ? `${amountPrefix} ${Math.abs(tx.amount)} ${tx.tokenType || 'cxUSDC'}`
+                      : `${amountPrefix}${formatAmount(tx.amount)}`;
+
                     return (
                       <motion.tr
                         key={tx.id || tx._id}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="border-b border-gray-700 hover:bg-gray-750"
+                        className={`border-b border-gray-700 hover:bg-gray-750 ${(isCrypto || isHybrid) ? 'bg-purple-900/5' : ''}`}
                       >
                         <td className="p-4">
                           <div className="flex items-center gap-3">
-                            <div
-                              className={`w-10 h-10 rounded-full flex items-center justify-center ${tx.isSent
-                                ? "bg-red-900/30 text-red-400"
-                                : "bg-green-900/30 text-green-400"
-                                }`}
-                            >
-                              {tx.isSent ? (
-                                <svg
-                                  className="w-5 h-5"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                                  />
-                                </svg>
-                              ) : (
-                                <svg
-                                  className="w-5 h-5"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M13 7l5 5m0 0l-5 5m5-5H6"
-                                  />
-                                </svg>
-                              )}
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${iconBg} ${iconColor}`}>
+                              {icon}
                             </div>
                             <div>
-                              <p className="font-medium">
-                                {tx.isSent ? "To: " : "From: "}
-                                {tx.isSent ? tx.toUserName : tx.fromUserName}
-                              </p>
-                              <p className="text-sm text-gray-400">
-                                {tx.isSent ? tx.toUpi : tx.fromUpi}
-                              </p>
+                              <p className="font-medium">{label}</p>
+                              <p className="text-sm text-gray-400">{sublabel}</p>
+                              {tx.tokenType && (isCrypto || isHybrid) && (
+                                <p className="text-xs text-purple-400/70 font-mono">{tx.tokenType}</p>
+                              )}
                             </div>
                           </div>
                         </td>
                         <td className="p-4">
-                          <p className="text-gray-300">{formatDate(tx.date)}</p>
+                          <p className="text-gray-300">{formatDate(tx.date || tx.createdAt)}</p>
                         </td>
                         <td className="p-4">
-                          <p
-                            className={`font-semibold ${tx.isSent ? "text-red-400" : "text-green-400"
-                              }`}
-                          >
-                            {tx.isSent ? "-" : "+"}
-                            {formatAmount(tx.amount)}
+                          <p className={`font-semibold ${amountColor}`}>
+                            {displayAmount}
                           </p>
                         </td>
                         <td className="p-4">
-                          <span
-                            className={`px-3 py-1 rounded-full text-xs font-medium ${tx.status === "COMPLETED"
-                              ? "bg-green-900/30 text-green-400"
-                              : tx.status === "PENDING"
-                                ? "bg-yellow-900/30 text-yellow-400"
-                                : "bg-gray-700 text-gray-300"
-                              }`}
-                          >
-                            {tx.status || "Completed"}
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColor}`}>
+                            {tx.status || 'Completed'}
                           </span>
                         </td>
                       </motion.tr>

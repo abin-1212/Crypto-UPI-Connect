@@ -100,11 +100,24 @@ export const AuthProvider = ({ children }) => {
   /* =====================
      LOGOUT
   ===================== */
-  const logout = () => {
+  const logout = async () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setToken(null);
     setUser(null);
+
+    // Revoke MetaMask permissions so next login forces account picker
+    try {
+      if (window.ethereum) {
+        await window.ethereum.request({
+          method: 'wallet_revokePermissions',
+          params: [{ eth_accounts: {} }],
+        });
+      }
+    } catch (err) {
+      // Silently ignore — older MetaMask versions may not support this
+      console.debug('MetaMask permission revoke skipped:', err.message);
+    }
   };
 
   return (

@@ -34,6 +34,7 @@ const Dashboard = () => {
     cryptoBalances,
     isConnecting,
     connectWallet,
+    refreshAllData,
   } = useCrypto();
 
   const [balance, setBalance] = useState(0);
@@ -70,7 +71,21 @@ const Dashboard = () => {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchData();
+    // Also sync CryptoContext balances (covers Stripe redirect scenarios)
+    refreshAllData();
+  }, []);
+
+  // Refetch when window regains focus (user returns from Stripe or another tab)
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchData();
+      refreshAllData();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -208,9 +223,9 @@ const Dashboard = () => {
                 <div className="flex items-center gap-2">
                   <Wallet size={14} className="text-orange-400" />
                   <span className="text-xs text-gray-400">MetaMask:</span>
-                  <span className="text-xs text-white">{walletVerified ? 'Connected & Verified' : userWallet ? 'Connected' : 'Not Connected'}</span>
+                  <span className="text-xs text-white">{walletVerified ? 'Connected & Verified' : 'Not Connected'}</span>
                 </div>
-                {!userWallet && (
+                {!walletVerified && (
                   <button onClick={connectWallet} disabled={isConnecting}
                     className="text-xs bg-orange-500/20 text-orange-400 px-2 py-1 rounded hover:bg-orange-500/30 transition-colors">
                     {isConnecting ? 'Connecting...' : 'Connect'}
@@ -273,8 +288,12 @@ const Dashboard = () => {
               <div className="text-center py-4 text-gray-500">Loading activity...</div>
             ) : transactions.length > 0 ? (
               transactions.map((tx) => {
-                const isIncoming = tx.toUser === user?.id || tx.toUser?._id === user?.id;
-                return <TransactionItem key={tx._id} transaction={{ ...tx, isIncoming }} currentUserId={user?.id} />;
+                const userId = user?.id;
+                const isFromMe = (tx.fromUser === userId || tx.fromUser?._id === userId);
+                const isToMe = (tx.toUser === userId || tx.toUser?._id === userId);
+                // Deposits are always incoming; for transfers, incoming = I'm only the receiver
+                const isIncoming = tx.type === 'DEPOSIT' ? true : (isToMe && !isFromMe);
+                return <TransactionItem key={tx._id} transaction={{ ...tx, isIncoming }} currentUserId={userId} />;
               })
             ) : (
               <div className="text-center py-8 text-gray-500">No recent transactions</div>

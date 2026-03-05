@@ -20,7 +20,6 @@ import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 import BankAccount from "../models/BankAccount.js";
 import blockchainService from "../services/blockchain.service.js";
-import BlockchainService from "../services/blockchain.service.js";
 import {
   getExchangeRate,
   getAllRates,
@@ -64,7 +63,7 @@ router.get("/nonce", protect, async (req, res) => {
     const user = await User.findById(req.user._id).select("walletNonce walletAddress walletVerified");
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    const message = BlockchainService.generateSignMessage(user.walletNonce);
+    const message = blockchainService.constructor.generateSignMessage(user.walletNonce);
 
     res.json({
       success: true,
@@ -74,6 +73,7 @@ router.get("/nonce", protect, async (req, res) => {
       walletVerified: user.walletVerified || false,
     });
   } catch (error) {
+    console.error('Wallet nonce error:', error);
     res.status(500).json({ success: false, message: "Failed to get nonce" });
   }
 });
@@ -101,20 +101,28 @@ router.post(
         return res.status(404).json({ success: false, message: "User not found" });
       }
 
-      const expectedMessage = BlockchainService.generateSignMessage(
+      const expectedMessage = blockchainService.constructor.generateSignMessage(
         user.walletNonce
       );
 
-      const isValid = blockchainService.verifySignatureMatches(
-        expectedMessage,
-        signature,
-        walletAddress
-      );
+      // ─── DEBUG: log everything for diagnosis ───
+      const recovered = blockchainService.verifySignature(expectedMessage, signature);
+      console.log('[WALLET VERIFY DEBUG]', {
+        userId: req.user._id,
+        submittedWallet: walletAddress,
+        recoveredAddr: recovered,
+        match: recovered.toLowerCase() === walletAddress.toLowerCase(),
+        nonce: user.walletNonce,
+        existingWallet: user.walletAddress,
+        alreadyVerified: user.walletVerified,
+      });
+
+      const isValid = recovered.toLowerCase() === walletAddress.toLowerCase();
 
       if (!isValid) {
         return res.status(401).json({
           success: false,
-          message: "Signature verification failed. Address does not match.",
+          message: `Signature verification failed. Recovered ${recovered.substring(0,10)}… but expected ${walletAddress.substring(0,10)}…`,
         });
       }
 

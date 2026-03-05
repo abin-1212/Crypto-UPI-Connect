@@ -105,20 +105,43 @@ router.get("/history", protect, async (req, res) => {
       .populate("toUser", "name email");
 
     // Format for frontend
-    const formatted = transactions.map(tx => ({
-      id: tx._id,
-      date: tx.createdAt,
-      amount: tx.amount,
-      type: tx.type,
-      fromUserId: tx.fromUser?._id,
-      fromUserName: tx.fromUser?.name,
-      fromUpi: tx.fromUpi,
-      toUserId: tx.toUser?._id,
-      toUserName: tx.toUser?.name,
-      toUpi: tx.toUpi,
-      isSent: tx.fromUser?._id.toString() === req.user._id.toString(),
-      status: "COMPLETED" // Or use actual status from your model
-    }));
+    const userId = req.user._id.toString();
+    const formatted = transactions.map(tx => {
+      const isFromMe = tx.fromUser?._id?.toString() === userId;
+      const isToMe = tx.toUser?._id?.toString() === userId;
+      const isDeposit = tx.type === 'DEPOSIT';
+
+      // Determine isSent:  deposits are NOT "sent" — they are incoming to self
+      const isSent = isDeposit ? false : isFromMe;
+
+      return {
+        id: tx._id,
+        _id: tx._id,
+        date: tx.createdAt,
+        createdAt: tx.createdAt,
+        amount: tx.amount,
+        type: tx.type || 'UPI_TRANSFER',
+        fromUserId: tx.fromUser?._id,
+        fromUserName: tx.fromUser?.name,
+        fromUpi: tx.fromUpi,
+        toUserId: tx.toUser?._id,
+        toUserName: tx.toUser?.name,
+        toUpi: tx.toUpi,
+        isSent,
+        status: tx.status || 'COMPLETED',
+        paymentMethod: tx.paymentMethod || 'UPI',
+        tokenType: tx.tokenType,
+        txHash: tx.txHash,
+        etherscanUrl: tx.etherscanUrl,
+        direction: tx.direction,
+        category: tx.category,
+        description: tx.description,
+        note: tx.note,
+        cryptoAmount: tx.cryptoAmount,
+        inrAmount: tx.inrAmount,
+        exchangeRate: tx.exchangeRate,
+      };
+    });
 
     res.json(formatted);
   } catch (error) {
@@ -176,10 +199,16 @@ router.post("/crypto", protect, async (req, res) => {
       return res.status(404).json({ success: false, message: "Sender not found" });
     }
 
-    // Look up recipient
+    // Look up recipient by ID or wallet address
     let recipient = null;
     if (recipientUserId) {
       recipient = await User.findById(recipientUserId);
+    }
+    if (!recipient && toWalletAddress) {
+      recipient = await User.findOne({
+        walletAddress: { $regex: new RegExp(`^${toWalletAddress}$`, 'i') },
+        _id: { $ne: req.user._id }
+      });
     }
 
     // Verify on-chain receipt

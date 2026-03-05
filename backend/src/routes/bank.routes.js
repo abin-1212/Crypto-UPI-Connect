@@ -6,12 +6,29 @@ import User from "../models/User.js";
 const router = express.Router();
 
 router.get("/balance", protect, async (req, res) => {
-  const account = await BankAccount.findOne({ userId: req.user._id });
+  try {
+    let account = await BankAccount.findOne({ userId: req.user._id });
 
-  res.json({
-    upiId: account.upiId,
-    balance: account.balance,
-  });
+    // Auto-create BankAccount if missing (legacy users)
+    if (!account) {
+      const user = await User.findById(req.user._id);
+      const emailPrefix = (user.email || 'user').split('@')[0];
+      account = await BankAccount.create({
+        userId: req.user._id,
+        upiId: `${emailPrefix}@cxpay`,
+        accountNumber: `CX${Date.now()}${Math.floor(Math.random() * 1000)}`,
+        balance: 10000,
+      });
+    }
+
+    res.json({
+      upiId: account.upiId,
+      balance: account.balance,
+    });
+  } catch (error) {
+    console.error('Bank balance error:', error.message);
+    res.status(500).json({ message: 'Failed to fetch balance' });
+  }
 });
 
 /**
