@@ -27,7 +27,12 @@ const FALLBACK_RATES = {
   BTC: 6500000,
 };
 
-const SUPPORTED_TOKENS = Object.keys(COINGECKO_IDS);
+// ─── Alias map: project tokens → CoinGecko base tokens ──
+const TOKEN_ALIASES = {
+  CXUSDC: "USDC",
+};
+
+const SUPPORTED_TOKENS = [...Object.keys(COINGECKO_IDS), ...Object.keys(TOKEN_ALIASES)];
 
 // ─── In-memory cache ─────────────────────────────────────
 let cachedRates = { ...FALLBACK_RATES };
@@ -109,9 +114,12 @@ refreshRates();
  * @throws  {Error}         — If token is not supported
  */
 export const getExchangeRate = (token) => {
-  const key = token.toUpperCase().trim();
+  let key = token.toUpperCase().trim();
 
-  if (!SUPPORTED_TOKENS.includes(key)) {
+  // Resolve aliases (e.g. cxUSDC → USDC)
+  if (TOKEN_ALIASES[key]) key = TOKEN_ALIASES[key];
+
+  if (!Object.keys(COINGECKO_IDS).includes(key)) {
     throw new Error(
       `Unsupported token "${token}". Supported: ${SUPPORTED_TOKENS.join(", ")}`
     );

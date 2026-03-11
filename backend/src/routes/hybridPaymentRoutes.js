@@ -167,8 +167,6 @@ router.post(
         tokenType: token.toUpperCase(),
         walletFrom: sender.walletAddress,
         walletTo: receiverUpiId,
-        txHash,
-        offchainId,
         blockNumber: verification.blockNumber,
         confirmations: verification.confirmations,
         etherscanUrl: `${BLOCK_EXPLORER}/tx/${txHash}`,
@@ -202,7 +200,7 @@ router.post(
       return res.status(500).json({
         success: false,
         message: "Crypto-to-UPI transfer failed",
-        error: process.env.NODE_ENV === "development" ? error.message : undefined,
+        error: error.message,
       });
     }
   }
@@ -346,7 +344,6 @@ router.post(
         status: "SETTLED",
         paymentMethod: "BLOCKCHAIN",
         tokenType: token.toUpperCase(),
-        txHash: releaseResult.txHash,
         blockNumber: releaseResult.blockNumber,
         etherscanUrl: `${BLOCK_EXPLORER}/tx/${releaseResult.txHash}`,
         cryptoAmount: convertedCrypto,

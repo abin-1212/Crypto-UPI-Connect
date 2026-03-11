@@ -387,7 +387,7 @@ export const CryptoProvider = ({ children }) => {
                 cryptoAmount: amount,
                 token,
                 receiverUpiId,
-            });
+            }, { timeout: 120000, _suppressToast: true });
 
             toast.dismiss(loadingToastId);
             if (response.data.success) {
@@ -402,6 +402,8 @@ export const CryptoProvider = ({ children }) => {
         } catch (error) {
             setLastTxStatus('FAILED');
             if (loadingToastId) toast.dismiss(loadingToastId);
+            const msg = error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Crypto-to-UPI transfer failed';
+            showToast.error(msg);
             throw error;
         } finally {
             setTxPending(false);
@@ -422,7 +424,7 @@ export const CryptoProvider = ({ children }) => {
                 receiverWalletAddress,
                 token: token.toUpperCase(),
                 inrAmount: parseFloat(inrAmount),
-            });
+            }, { timeout: 120000, _suppressToast: true });
 
             if (response.data.success) {
                 setLastTxHash(response.data.data?.txHash);

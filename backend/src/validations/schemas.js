@@ -40,7 +40,7 @@ export const walletConnectSchema = Joi.object({
 export const cryptoToUpiSchema = Joi.object({
   txHash: txHash.required(),
   offchainId: Joi.string().required().min(10).max(100),
-  amount: Joi.number().positive().required().max(1000000),
+  cryptoAmount: Joi.number().positive().required().max(1000000),
   token: Joi.string()
     .valid("USDC", "cxUSDC")
     .default("cxUSDC")

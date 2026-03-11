@@ -73,7 +73,7 @@ class BlockchainService {
       );
     }
 
-    this.minConfirmations = parseInt(process.env.MIN_CONFIRMATIONS || "2");
+    this.minConfirmations = parseInt(process.env.MIN_CONFIRMATIONS || "1");
     this.initialized = true;
     console.log("⛓️  Blockchain service initialized (Sepolia)");
   }
@@ -101,10 +101,16 @@ class BlockchainService {
   async verifyLockTransaction(txHash, expectedSender, expectedAmount, expectedOffchainId) {
     this._requireInit();
 
-    // 1. Fetch receipt
-    const receipt = await this.provider.getTransactionReceipt(txHash);
+    // 1. Fetch receipt (with retries — RPC nodes may have slight indexing delay)
+    let receipt = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      receipt = await this.provider.getTransactionReceipt(txHash);
+      if (receipt) break;
+      console.log(`⏳ Receipt not found yet, retry ${attempt + 1}/5...`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
     if (!receipt) {
-      throw new Error("Transaction not found on-chain. It may still be pending.");
+      throw new Error("Transaction not found on-chain after retries. It may still be pending.");
     }
 
     // 2. Check on-chain success
