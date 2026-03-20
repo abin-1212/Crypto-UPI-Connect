@@ -421,7 +421,7 @@ export const CryptoProvider = ({ children }) => {
             setLastTxStatus('PENDING');
 
             const response = await api.post('/pay/upi-to-crypto', {
-                receiverWalletAddress,
+                receiverAddress: receiverWalletAddress,
                 token: token.toUpperCase(),
                 inrAmount: parseFloat(inrAmount),
             }, { timeout: 120000, _suppressToast: true });

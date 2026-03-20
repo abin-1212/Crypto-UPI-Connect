@@ -68,7 +68,6 @@ const transactionSchema = new mongoose.Schema(
       type: String,
       unique: true,
       sparse: true, // Allow null for UPI-only transactions
-      index: true,
     },
     blockNumber: { type: Number },
     confirmations: { type: Number, default: 0 },
@@ -78,7 +77,6 @@ const transactionSchema = new mongoose.Schema(
       type: String,
       unique: true,
       sparse: true,
-      index: true,
     },
     releaseTxHash: {
       type: String,
