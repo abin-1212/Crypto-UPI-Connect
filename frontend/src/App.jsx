@@ -9,7 +9,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import Send from "./pages/Send";
-import RequestMoney from "./components/RequestMoney";
+import Requests from "./pages/Requests";
 import Transactions from "./pages/Transactions";
 import Analytics from "./pages/Analytics";
 import Profile from "./pages/Profile";
@@ -119,7 +119,7 @@ function App() {
             path="/requests"
             element={
               <ProtectedRoute>
-                <RequestMoney />
+                <Requests />
               </ProtectedRoute>
             }
           />

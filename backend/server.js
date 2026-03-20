@@ -53,7 +53,7 @@ app.use("/bank", bankRoutes);
 app.use("/pay", paymentRoutes);
 app.use("/pay", hybridPaymentRoutes);   // Hybrid: /pay/crypto-to-upi & /pay/upi-to-crypto
 app.use("/transactions", transactionRoutes);
-app.use("/api/requests", requestRoutes);
+app.use("/api/request", requestRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/notification", notificationRoutes);
 app.use("/wallet", walletRoutes);

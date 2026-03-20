@@ -35,6 +35,15 @@ const RequestSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    category: {
+        type: String,
+        enum: ['DINNER', 'MOVIE', 'RENT', 'SHOPPING', 'MEDICAL', 'TRAVEL', 'OTHER'],
+        default: 'OTHER'
+    },
+    dueDate: {
+        type: Date,
+        default: null
+    },
     status: {
         type: String,
         enum: ['PENDING', 'PAID', 'DECLINED', 'EXPIRED'],
