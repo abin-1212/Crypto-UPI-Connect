@@ -222,7 +222,7 @@ router.post(
   validate(upiToCryptoSchema),
   async (req, res) => {
     try {
-      const { receiverWalletAddress, token, inrAmount } = req.body;
+      const { receiverAddress, token, inrAmount } = req.body;
       const senderUserId = req.user._id;
 
       const parsedInr = parseFloat(inrAmount);
@@ -247,7 +247,7 @@ router.post(
 
       // ── 2. Find receiver by wallet address ──
       const receiver = await User.findOne({
-        walletAddress: new RegExp(`^${receiverWalletAddress}$`, "i"),
+        walletAddress: new RegExp(`^${receiverAddress}$`, "i"),
         walletVerified: true,
       });
       if (!receiver) {

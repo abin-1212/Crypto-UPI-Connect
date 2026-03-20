@@ -263,7 +263,6 @@ router.post("/crypto", protect, async (req, res) => {
         tokenType,
         walletFrom: sender.walletAddress || "",
         walletTo: toWalletAddress,
-        txHash,
         blockNumber: receipt?.blockNumber,
         confirmations,
         etherscanUrl: `${BLOCK_EXPLORER}/tx/${txHash}`,
