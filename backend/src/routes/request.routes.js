@@ -9,75 +9,107 @@ const router = express.Router();
 
 /**
  * Create a payment request
- * POST /api/requests/create
+ * POST /api/request
  */
-router.post('/create', protect, async (req, res) => {
+router.post('/', protect, async (req, res) => {
   try {
-    const { amount, currency, description, toUPI, toCryptoAddress, paymentMethod } = req.body;
+    const { toUpiId, toUserId, amount, currency = 'INR', description = '', paymentMethod = 'UPI', toCryptoAddress, category = 'OTHER', dueDate } = req.body;
+
+    // Validate amount
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Amount must be greater than 0' });
+    }
+
+    // Validate description
+    if (!description || description.trim().length === 0) {
+      return res.status(400).json({ message: 'Please provide a description for the request' });
+    }
+
+    if (!toUpiId && !toUserId && !toCryptoAddress) {
+      return res.status(400).json({ message: 'Please provide recipient UPI ID, User ID, or Crypto Address' });
+    }
 
     // Find recipient if UPI provided
-    let recipient = null;
     let recipientId = null;
+    let recipientUpi = toUpiId;
 
-    if (toUPI) {
-      // Look up User via BankAccount (UPI)
-      const bankAccount = await BankAccount.findOne({ upiId: toUPI });
+    if (toUpiId) {
+      const bankAccount = await BankAccount.findOne({ upiId: toUpiId });
       if (bankAccount) {
         recipientId = bankAccount.userId;
       }
+    } else if (toUserId) {
+      recipientId = toUserId;
+      // Also get their UPI for reference
+      const bankAccount = await BankAccount.findOne({ userId: toUserId });
+      if (bankAccount) {
+        recipientUpi = bankAccount.upiId;
+      }
     } else if (toCryptoAddress) {
-      // Look up User via ConvergeX Address
-      // Note: convergeXWallet.address is in User model
-      recipient = await User.findOne({ 'convergeXWallet.address': toCryptoAddress });
-      if (recipient) {
-        recipientId = recipient._id;
+      const user = await User.findOne({ 'convergeXWallet.address': toCryptoAddress });
+      if (user) {
+        recipientId = user._id;
       }
     }
 
-    const request = new Request({
-      fromUserId: req.user._id, // Auth middleware attaches user object, use _id
+    const newRequest = new Request({
+      fromUserId: req.user._id,
       toUserId: recipientId,
-      toUPI,
+      toUPI: recipientUpi,
       toCryptoAddress,
       amount,
       currency,
-      description,
-      paymentMethod
+      description: description.trim(),
+      paymentMethod,
+      category,
+      dueDate: dueDate ? new Date(dueDate) : null,
+      status: 'PENDING'
     });
 
-    await request.save();
+    await newRequest.save();
 
     res.status(201).json({
       success: true,
-      requestId: request.requestId,
-      message: 'Payment request created successfully'
+      message: 'Payment request created successfully',
+      requestId: newRequest.requestId,
+      request: newRequest
     });
   } catch (error) {
     console.error("Create Request Error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ message: error.message });
   }
 });
 
 /**
- * Get my pending (outgoing) requests
- * GET /api/requests/my-requests
+ * Get my outgoing requests
+ * GET /api/request/outgoing
  */
-router.get('/my-requests', protect, async (req, res) => {
+router.get('/outgoing', protect, async (req, res) => {
   try {
-    const requests = await Request.find({
-      fromUserId: req.user._id,
-      status: 'PENDING'
-    }).sort({ createdAt: -1 });
+    let requests = await Request.find({
+      fromUserId: req.user._id
+    }).populate('toUserId', 'name email')
+      .sort({ createdAt: -1 });
 
-    res.json(requests);
+    // Transform response to use toUser for outgoing requests
+    requests = requests.map(req => ({
+      ...req.toObject(),
+      toUser: req.toUserId
+    }));
+
+    res.json({
+      success: true,
+      requests
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Get Outgoing Requests Error:", error);
+    res.status(500).json({ message: error.message });
   }
 });
 
 /**
- * Get incoming requests (sent TO me)
- * GET /api/requests/incoming
+ * Get my incoming requests (sent TO me)
+ * GET /api/request/incoming
  */
 router.get('/incoming', protect, async (req, res) => {
   try {
@@ -88,63 +120,87 @@ router.get('/incoming', protect, async (req, res) => {
     const cryptoAddress = user.convergeXWallet?.address;
 
     // Find requests targeted to my UserID, my UPI, or my Crypto Address
-    const requests = await Request.find({
+    let requests = await Request.find({
       $or: [
         { toUserId: req.user._id },
         { toUPI: upiId },
         { toCryptoAddress: cryptoAddress }
-      ],
-      status: 'PENDING'
+      ]
     }).populate('fromUserId', 'name email')
       .sort({ createdAt: -1 });
 
-    res.json(requests);
+    // Transform response to use fromUser for incoming requests
+    requests = requests.map(req => ({
+      ...req.toObject(),
+      fromUser: req.fromUserId
+    }));
+
+    res.json({
+      success: true,
+      requests
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Get Incoming Requests Error:", error);
+    res.status(500).json({ message: error.message });
   }
 });
 
 /**
- * Pay a request
- * POST /api/requests/:requestId/pay
+ * Accept and pay a request
+ * POST /api/request/:requestId/accept
  */
-router.post('/:requestId/pay', protect, async (req, res) => {
+router.post('/:requestId/accept', protect, async (req, res) => {
   try {
-    const request = await Request.findOne({ requestId: req.params.requestId });
+    // Support both MongoDB _id and custom requestId
+    const query = {
+      $or: [
+        { _id: req.params.requestId },
+        { requestId: req.params.requestId }
+      ]
+    };
+    const request = await Request.findOne(query).populate('fromUserId', 'name email');
 
     if (!request) {
-      return res.status(404).json({ error: 'Request not found' });
+      return res.status(404).json({ message: 'Request not found' });
+    }
+
+    // Check if requester is trying to accept their own request
+    if (request.fromUserId._id.toString() === req.user._id.toString()) {
+      return res.status(400).json({ message: 'You cannot accept your own request' });
     }
 
     if (request.status !== 'PENDING') {
-      return res.status(400).json({ error: 'Request already processed' });
+      return res.status(400).json({ message: 'Request has already been processed' });
     }
 
-    // Find the sender (current user paying the request)
-    const senderUser = await User.findById(req.user._id);
-    const senderBank = await BankAccount.findOne({ userId: req.user._id });
+    // Check if request has expired
+    if (new Date() > request.expiresAt) {
+      request.status = 'EXPIRED';
+      await request.save();
+      return res.status(400).json({ message: 'Request has expired' });
+    }
 
-    // Recipient is the person who CREATED the request (fromUserId)
-    const recipientBank = await BankAccount.findOne({ userId: request.fromUserId });
+    // Find the payer (current user)
+    const payerBank = await BankAccount.findOne({ userId: req.user._id });
+    if (!payerBank) {
+      return res.status(404).json({ message: 'Bank account not found' });
+    }
 
-    // Handle payment based on method
-    if (request.paymentMethod === 'UPI' || request.paymentMethod === 'CONVERGEX_WALLET' || request.paymentMethod === 'METAMASK') {
-      // All request payments go through fiat bank balance (on-chain crypto
-      // requests would need MetaMask signing which isn't handled here)
-      if (!senderBank) {
-        return res.status(404).json({ error: 'Bank account not found' });
-      }
-      if (senderBank.balance < request.amount) {
-        return res.status(400).json({ error: 'Insufficient bank balance' });
-      }
-      senderBank.balance -= request.amount;
-      await senderBank.save();
+    // Check balance
+    if (payerBank.balance < request.amount) {
+      return res.status(400).json({ message: 'Insufficient balance to accept this request' });
+    }
 
-      // Credit recipient
-      if (recipientBank) {
-        recipientBank.balance += request.amount;
-        await recipientBank.save();
-      }
+    // Find the requester's bank account
+    const requesterBank = await BankAccount.findOne({ userId: request.fromUserId._id });
+
+    // Process payment
+    payerBank.balance -= request.amount;
+    await payerBank.save();
+
+    if (requesterBank) {
+      requesterBank.balance += request.amount;
+      await requesterBank.save();
     }
 
     // Update request status
@@ -152,12 +208,12 @@ router.post('/:requestId/pay', protect, async (req, res) => {
     request.paidAt = new Date();
     await request.save();
 
-    // Create transaction record with correct schema fields
-    const transaction = new Transaction({
+    // Create transaction for payer (outgoing)
+    const payerTx = new Transaction({
       fromUser: req.user._id,
-      toUser: request.fromUserId,
-      fromUpi: senderBank?.upiId || '',
-      toUpi: recipientBank?.upiId || request.toUPI || '',
+      toUser: request.fromUserId._id,
+      fromUpi: payerBank.upiId,
+      toUpi: requesterBank?.upiId || request.toUPI || '',
       amount: request.amount,
       type: 'REQUEST_ACCEPTED',
       status: 'COMPLETED',
@@ -167,14 +223,14 @@ router.post('/:requestId/pay', protect, async (req, res) => {
       direction: 'OUTGOING',
       note: request.description || '',
     });
-    await transaction.save();
+    await payerTx.save();
 
-    // Also create the incoming transaction for the requester
-    await Transaction.create({
+    // Create transaction for requester (incoming)
+    const requesterTx = new Transaction({
       fromUser: req.user._id,
-      toUser: request.fromUserId,
-      fromUpi: senderBank?.upiId || '',
-      toUpi: recipientBank?.upiId || request.toUPI || '',
+      toUser: request.fromUserId._id,
+      fromUpi: payerBank.upiId,
+      toUpi: requesterBank?.upiId || request.toUPI || '',
       amount: request.amount,
       type: 'REQUEST_ACCEPTED',
       status: 'COMPLETED',
@@ -184,15 +240,86 @@ router.post('/:requestId/pay', protect, async (req, res) => {
       direction: 'INCOMING',
       note: request.description || '',
     });
+    await requesterTx.save();
 
     res.json({
       success: true,
       message: 'Payment completed successfully',
-      newBalance: senderBank?.balance,
+      newBalance: payerBank.balance,
+      request
     });
   } catch (error) {
-    console.error("Pay Request Error:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Accept Request Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * Reject a request
+ * POST /api/request/:requestId/reject
+ */
+router.post('/:requestId/reject', protect, async (req, res) => {
+  try {
+    // Support both MongoDB _id and custom requestId
+    const query = {
+      $or: [
+        { _id: req.params.requestId },
+        { requestId: req.params.requestId }
+      ]
+    };
+    const request = await Request.findOne(query).populate('fromUserId', 'name email');
+
+    if (!request) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+
+    if (request.status !== 'PENDING') {
+      return res.status(400).json({ message: 'Request cannot be rejected - already processed' });
+    }
+
+    // Update request status to DECLINED
+    request.status = 'DECLINED';
+    await request.save();
+
+    res.json({
+      success: true,
+      message: 'Request declined',
+      request
+    });
+  } catch (error) {
+    console.error("Reject Request Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * Get request by ID
+ * GET /api/request/:requestId
+ */
+router.get('/:requestId', protect, async (req, res) => {
+  try {
+    // Support both MongoDB _id and custom requestId
+    const query = {
+      $or: [
+        { _id: req.params.requestId },
+        { requestId: req.params.requestId }
+      ]
+    };
+    const request = await Request.findOne(query)
+      .populate('fromUserId', 'name email')
+      .populate('toUserId', 'name email');
+
+    if (!request) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+
+    res.json({
+      success: true,
+      request
+    });
+  } catch (error) {
+    console.error("Get Request Error:", error);
+    res.status(500).json({ message: error.message });
   }
 });
 
