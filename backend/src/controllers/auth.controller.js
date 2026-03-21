@@ -39,7 +39,7 @@ export const register = async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
-      // Wallet Details will be fetched on dashboard
+      role: user.role,
     },
   });
 };
@@ -59,6 +59,7 @@ export const login = async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
+      role: user.role,
     },
   });
 };

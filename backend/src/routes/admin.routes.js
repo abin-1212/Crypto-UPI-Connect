@@ -3,6 +3,12 @@ import adminMiddleware from '../middleware/admin.middleware.js';
 import User from '../models/User.js';
 import Transaction from '../models/Transaction.js';
 import Request from '../models/Request.js';
+import Kyc from '../models/Kyc.js';
+import {
+  getAllKYCSubmissions,
+  approveKYC,
+  rejectKYC,
+} from '../controllers/kyc.controller.js';
 // Note: User model previously modified to include role, kycStatus etc.
 
 const router = express.Router();
@@ -308,5 +314,30 @@ router.get('/transactions', adminMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+/* ═══════════════════════════════════════════════════════════════
+   KYC Management Routes (Admin)
+═══════════════════════════════════════════════════════════════ */
+
+/**
+ * GET /api/admin/kyc
+ * Admin: Get all KYC submissions (paginated)
+ * Query params: page, limit, status (all|pending|approved|rejected|under_review)
+ */
+router.get('/kyc', adminMiddleware, getAllKYCSubmissions);
+
+/**
+ * PUT /api/admin/kyc/:userId/approve
+ * Admin: Approve KYC submission
+ * Sets KYC status to approved and User.kyc = true
+ */
+router.put('/kyc/:userId/approve', adminMiddleware, approveKYC);
+
+/**
+ * PUT /api/admin/kyc/:userId/reject
+ * Admin: Reject KYC submission
+ * Body: { adminRemarks: "reason" }
+ */
+router.put('/kyc/:userId/reject', adminMiddleware, rejectKYC);
 
 export default router;

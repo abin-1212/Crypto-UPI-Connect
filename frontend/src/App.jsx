@@ -3,11 +3,13 @@ import { Toaster } from "react-hot-toast";
 import { AnimatePresence } from "framer-motion";
 import { useAuth } from "./context/AuthContext";
 import Navbar from "./components/ui/Navbar";
+import TransactionGuard from "./components/TransactionGuard";
 
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
+import KYC from "./pages/KYC";
 import Send from "./pages/Send";
 import Requests from "./pages/Requests";
 import Transactions from "./pages/Transactions";
@@ -108,10 +110,20 @@ function App() {
             }
           />
           <Route
+            path="/kyc"
+            element={
+              <ProtectedRoute>
+                <KYC />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/send"
             element={
               <ProtectedRoute>
-                <Send />
+                <TransactionGuard featureName="Send Money">
+                  <Send />
+                </TransactionGuard>
               </ProtectedRoute>
             }
           />
@@ -151,7 +163,9 @@ function App() {
             path="/crypto-pay"
             element={
               <ProtectedRoute>
-                <CryptoPay />
+                <TransactionGuard featureName="Crypto Pay">
+                  <CryptoPay />
+                </TransactionGuard>
               </ProtectedRoute>
             }
           />
@@ -159,7 +173,9 @@ function App() {
             path="/add-money"
             element={
               <ProtectedRoute>
-                <AddMoney />
+                <TransactionGuard featureName="Add Money">
+                  <AddMoney />
+                </TransactionGuard>
               </ProtectedRoute>
             }
           />

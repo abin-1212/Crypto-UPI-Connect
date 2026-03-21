@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { pageVariants } from "../lib/animations";
 import TransactionItem from "../components/ui/TransactionItem";
 import EtherscanLink from "../components/ui/EtherscanLink";
+import KycStatusBadge from "../components/KycStatusBadge";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useCrypto } from "../context/CryptoContext";
@@ -97,9 +98,17 @@ const Dashboard = () => {
   };
 
   // KYC status
-  const [kycStatus, setKycStatus] = useState("");
+  const [kycData, setKycData] = useState({
+    status: "not_submitted",
+    kyc: false,
+  });
+  
   useEffect(() => {
-    api.get("/kyc/status").then(res => setKycStatus(res.data.kycStatus || "not-submitted")).catch(() => setKycStatus("error"));
+    // Fetch KYC status
+    api.get("/kyc/status").then(res => {
+      console.log('Dashboard KYC data:', res.data);
+      setKycData(res.data);
+    }).catch(() => setKycData({ status: "not_submitted", kyc: false }));
   }, []);
 
   // Wallet display address
@@ -108,6 +117,9 @@ const Dashboard = () => {
 
   return (
     <motion.div variants={pageVariants} initial="initial" animate="animate" exit="exit" className="space-y-8">
+
+      {/* KYC STATUS BADGE */}
+      <KycStatusBadge onStatusChange={(data) => setKycData(data)} />
 
       {/* 1. HERO: NET WORTH */}
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
@@ -264,13 +276,23 @@ const Dashboard = () => {
           <span className="font-medium text-white">History</span>
         </Link>
 
-        <Link to="/kyc" className="glass-card p-4 flex flex-col items-center justify-center gap-3 hover:bg-white/10 transition-all group border-indigo-500/20 hover:border-indigo-500/50 hover:-translate-y-1">
-          <div className="w-12 h-12 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform shadow-lg shadow-indigo-500/10"
-            style={{ background: kycStatus === "verified" ? "#22c55e" : kycStatus === "pending" ? "#eab308" : kycStatus === "rejected" ? "#ef4444" : "#6366f1" }}>
-            <ShieldCheck size={24} />
+        {kycData?.kyc && kycData?.status === "approved" ? (
+          <div className="glass-card p-4 flex flex-col items-center justify-center gap-3 opacity-70 cursor-not-allowed group border-green-500/50">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center text-white transition-transform shadow-lg shadow-green-500/10" style={{ background: "#22c55e" }}>
+              <ShieldCheck size={24} />
+            </div>
+            <span className="font-medium text-green-300 text-xs">KYC: VERIFIED ✓</span>
+            <p className="text-xs text-gray-500 text-center">All transactions enabled</p>
           </div>
-          <span className="font-medium text-white text-xs">KYC: {kycStatus ? kycStatus.toUpperCase() : "N/A"}</span>
-        </Link>
+        ) : (
+          <Link to="/kyc" className="glass-card p-4 flex flex-col items-center justify-center gap-3 hover:bg-white/10 transition-all group border-indigo-500/20 hover:border-indigo-500/50 hover:-translate-y-1">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform shadow-lg shadow-indigo-500/10"
+              style={{ background: kycData?.status === "verified" ? "#22c55e" : kycData?.status === "pending" ? "#eab308" : kycData?.status === "rejected" ? "#ef4444" : "#6366f1" }}>
+              <ShieldCheck size={24} />
+            </div>
+            <span className="font-medium text-white text-xs">KYC: {kycData?.status ? kycData.status.toUpperCase() : "SUBMIT"}</span>
+          </Link>
+        )}
       </motion.div>
 
       {/* 4. RECENT ACTIVITY */}
