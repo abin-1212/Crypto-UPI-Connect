@@ -6,8 +6,11 @@ import {
     Users, DollarSign, CreditCard, TrendingUp,
     Activity, Shield, BarChart3, Calendar,
     Search, Filter, Download, MoreVertical,
-    ArrowUpRight, ArrowDownLeft, AlertCircle
+    ArrowUpRight, ArrowDownLeft, AlertCircle,
+    ChevronDown, CheckCircle, XCircle, Eye, X
 } from 'lucide-react';
+import api from '../api/client';
+import { showToast } from '../utils/toast';
 import './AdminDashboard.css';
 
 const AdminDashboard = () => {
@@ -330,26 +333,364 @@ const GlobalTransactions = () => {
     );
 };
 
-const KYCManagement = () => (
-    <div className="glass p-12 text-center animate-fade-in">
-        <Shield size={48} className="mx-auto mb-4 text-accent/50" />
-        <h2 className="text-2xl font-bold mb-2">KYC & Compliance</h2>
-        <p className="text-gray-400">Global KYC verification portal for ConvergeX users.</p>
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="glass p-6 text-left">
-                <div className="text-3xl font-bold mb-1">0</div>
-                <div className="text-sm text-gray-400">Pending Reviews</div>
-            </div>
-            <div className="glass p-6 text-left border-l-4 border-accent">
-                <div className="text-3xl font-bold mb-1">0</div>
-                <div className="text-sm text-gray-400">Verified Entities</div>
-            </div>
-            <div className="glass p-6 text-left border-l-4 border-red-500/50">
-                <div className="text-3xl font-bold mb-1">0</div>
-                <div className="text-sm text-gray-400">Flagged Profiles</div>
+// Image Modal Component
+const ImageModal = ({ imageUrl, altText, onClose }) => {
+    // Construct full URL if it's a relative path
+    const fullImageUrl = imageUrl?.startsWith('http') ? imageUrl : `http://localhost:5000${imageUrl}`;
+    
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={onClose}>
+            <div className="max-w-4xl max-h-[90vh] relative" onClick={(e) => e.stopPropagation()}>
+                <button
+                    onClick={onClose}
+                    className="absolute -top-12 right-0 text-white hover:text-gray-300 transition"
+                >
+                    <X size={28} />
+                </button>
+                <img
+                    src={fullImageUrl}
+                    alt={altText}
+                    className="w-full h-full object-contain rounded-lg border border-white/20"
+                    onError={(e) => {
+                        console.error('Image failed to load:', fullImageUrl);
+                        e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300"%3E%3Crect fill="%23333" width="400" height="300"/%3E%3Ctext x="50%25" y="50%25" fill="%23999" text-anchor="middle" dy=".3em"%3EImage not found%3C/text%3E%3C/svg%3E';
+                    }}
+                />
+                <p className="text-center text-gray-300 mt-4 text-sm">{altText}</p>
             </div>
         </div>
-    </div>
-);
+    );
+};
+
+const KYCManagement = () => {
+    const [kycSubmissions, setKycSubmissions] = useState([]);
+    const [filteredSubmissions, setFilteredSubmissions] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [expandedId, setExpandedId] = useState(null);
+    const [selectedForReview, setSelectedForReview] = useState(null);
+    const [rejectRemarks, setRejectRemarks] = useState('');
+    const [actionLoading, setActionLoading] = useState(false);
+    const [imageModal, setImageModal] = useState({ isOpen: false, url: '', alt: '' });
+
+    // Fetch KYC submissions
+    const fetchKycData = async () => {
+        setLoading(true);
+        try {
+            const response = await api.get('/api/admin/kyc', {
+                params: { status: statusFilter === 'all' ? undefined : statusFilter }
+            });
+            console.log('KYC Data loaded:', response.data);
+            setKycSubmissions(response.data.submissions);
+            filterSubmissions(response.data.submissions);
+        } catch (error) {
+            console.error('Error fetching KYC data:', error);
+            showToast('error', 'Failed to load KYC submissions');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchKycData();
+    }, [statusFilter]);
+
+    const filterSubmissions = (data) => {
+        if (statusFilter === 'all') {
+            setFilteredSubmissions(data);
+        } else {
+            setFilteredSubmissions(data.filter(s => s.status === statusFilter));
+        }
+    };
+
+    const handleApproveKYC = async (userId) => {
+        console.log('Approving KYC for user:', userId);
+        setActionLoading(true);
+        try {
+            const response = await api.put(`/api/admin/kyc/${userId}/approve`);
+            console.log('Approve response:', response.data);
+            if (response.data.success) {
+                showToast('success', '✅ KYC approved successfully');
+                setSelectedForReview(null);
+                setRejectRemarks('');
+                await fetchKycData();
+            }
+        } catch (error) {
+            console.error('Error approving KYC:', error.response?.data || error.message);
+            showToast('error', error.response?.data?.message || 'Failed to approve KYC');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleRejectKYC = async (userId) => {
+        if (!rejectRemarks.trim()) {
+            showToast('error', '⚠️ Please enter rejection remarks');
+            return;
+        }
+
+        console.log('Rejecting KYC for user:', userId, 'Remarks:', rejectRemarks);
+        setActionLoading(true);
+        try {
+            const response = await api.put(`/api/admin/kyc/${userId}/reject`, {
+                adminRemarks: rejectRemarks
+            });
+            console.log('Reject response:', response.data);
+            if (response.data.success) {
+                showToast('success', '❌ KYC rejected successfully');
+                setSelectedForReview(null);
+                setRejectRemarks('');
+                await fetchKycData();
+            }
+        } catch (error) {
+            console.error('Error rejecting KYC:', error.response?.data || error.message);
+            showToast('error', error.response?.data?.message || 'Failed to reject KYC');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const getStatusColor = (status) => {
+        switch (status) {
+            case 'approved': return 'text-green-400';
+            case 'rejected': return 'text-red-400';
+            case 'pending':
+            case 'under_review': return 'text-yellow-400';
+            default: return 'text-gray-400';
+        }
+    };
+
+    const getStatusBgColor = (status) => {
+        switch (status) {
+            case 'approved': return 'bg-green-500/20 border-green-500/50';
+            case 'rejected': return 'bg-red-500/20 border-red-500/50';
+            case 'pending':
+            case 'under_review': return 'bg-yellow-500/20 border-yellow-500/50';
+            default: return 'bg-gray-500/20 border-gray-500/50';
+        }
+    };
+
+    return (
+        <div className="kyc-management-view glass p-6 animate-fade-in">
+            {imageModal.isOpen && (
+                <ImageModal
+                    imageUrl={imageModal.url}
+                    altText={imageModal.alt}
+                    onClose={() => setImageModal({ isOpen: false, url: '', alt: '' })}
+                />
+            )}
+
+            <div className="view-header mb-6 flex flex-col sm:flex-row gap-4 items-center justify-between">
+                <h2 className="text-xl font-semibold">KYC Submissions</h2>
+                <div className="filters-row flex gap-2">
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                        className="glass px-3 py-2 text-sm text-white border border-white/20 rounded bg-white/5 cursor-pointer hover:bg-white/10 focus:outline-none focus:border-accent"
+                    >
+                        <option value="all" className="bg-slate-900">All Status</option>
+                        <option value="pending" className="bg-slate-900">Pending</option>
+                        <option value="under_review" className="bg-slate-900">Under Review</option>
+                        <option value="approved" className="bg-slate-900">Approved</option>
+                        <option value="rejected" className="bg-slate-900">Rejected</option>
+                    </select>
+                </div>
+            </div>
+
+            {loading ? (
+                <div className="text-center py-12 text-gray-400">
+                    <Activity className="animate-spin mx-auto mb-4" size={32} />
+                    Loading KYC submissions...
+                </div>
+            ) : filteredSubmissions.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">
+                    <Shield size={48} className="mx-auto mb-4 opacity-50" />
+                    <p>No KYC submissions found</p>
+                </div>
+            ) : (
+                <div className="kyc-submissions-list space-y-4">
+                    {filteredSubmissions.map((submission) => (
+                        <div key={submission._id} className="kyc-submission-card glass p-4 border border-white/10 rounded-lg">
+                            <div className="flex items-center justify-between cursor-pointer" onClick={() => setExpandedId(expandedId === submission._id ? null : submission._id)}>
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-3">
+                                        <div className="avatar-small">{submission.userId.name?.charAt(0) || 'U'}</div>
+                                        <div>
+                                            <div className="font-medium">{submission.userId.name}</div>
+                                            <div className="text-xs text-gray-500">{submission.userId.email}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                    <div className="text-right">
+                                        <div className="text-xs text-gray-400">Submitted</div>
+                                        <div className="text-sm font-medium">{new Date(submission.submittedAt).toLocaleDateString()}</div>
+                                    </div>
+                                    <div className={`status-pill ${getStatusBgColor(submission.status)}`}>
+                                        <span className={getStatusColor(submission.status)}>
+                                            {submission.status.toUpperCase()}
+                                        </span>
+                                    </div>
+                                    <ChevronDown
+                                        size={20}
+                                        className={`transition-transform ${expandedId === submission._id ? 'rotate-180' : ''}`}
+                                    />
+                                </div>
+                            </div>
+
+                            {expandedId === submission._id && (
+                                <div className="mt-4 pt-4 border-t border-white/10">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <h4 className="text-sm font-semibold mb-2 text-accent">
+                                                Document Type: {submission.documentType?.toUpperCase()}
+                                            </h4>
+                                            <div className="document-preview space-y-3">
+                                                <div>
+                                                    <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+                                                        <Eye size={14} />
+                                                        Front Side (Click to view)
+                                                    </p>
+                                                    <img
+                                                        src={submission.documentFrontUrl?.startsWith('http') ? submission.documentFrontUrl : `http://localhost:5000${submission.documentFrontUrl}`}
+                                                        alt="Document Front"
+                                                        onClick={() => setImageModal({ isOpen: true, url: submission.documentFrontUrl, alt: 'Document Front Side' })}
+                                                        className="w-full max-h-64 object-cover rounded border border-white/20 cursor-pointer hover:border-accent/50 hover:shadow-lg hover:shadow-accent/20 transition-all"
+                                                        onError={(e) => {
+                                                            console.error('Front document image failed to load');
+                                                            e.target.style.display = 'none';
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+                                                        <Eye size={14} />
+                                                        Back Side (Click to view)
+                                                    </p>
+                                                    <img
+                                                        src={submission.documentBackUrl?.startsWith('http') ? submission.documentBackUrl : `http://localhost:5000${submission.documentBackUrl}`}
+                                                        alt="Document Back"
+                                                        onClick={() => setImageModal({ isOpen: true, url: submission.documentBackUrl, alt: 'Document Back Side' })}
+                                                        className="w-full max-h-64 object-cover rounded border border-white/20 cursor-pointer hover:border-accent/50 hover:shadow-lg hover:shadow-accent/20 transition-all"
+                                                        onError={(e) => {
+                                                            console.error('Back document image failed to load');
+                                                            e.target.style.display = 'none';
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <div className="mb-4">
+                                                <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+                                                    <Eye size={14} />
+                                                    Selfie (Click to view)
+                                                </p>
+                                                <img
+                                                    src={submission.selfieUrl?.startsWith('http') ? submission.selfieUrl : `http://localhost:5000${submission.selfieUrl}`}
+                                                    alt="Selfie"
+                                                    onClick={() => setImageModal({ isOpen: true, url: submission.selfieUrl, alt: 'User Selfie' })}
+                                                    className="w-full max-h-64 object-cover rounded border border-white/20 cursor-pointer hover:border-accent/50 hover:shadow-lg hover:shadow-accent/20 transition-all"
+                                                    onError={(e) => {
+                                                        console.error('Selfie image failed to load');
+                                                        e.target.style.display = 'none';
+                                                    }}
+                                                />
+                                            </div>
+                                            <div className="bg-white/5 rounded p-3 space-y-2 text-sm border border-white/10">
+                                                <div>
+                                                    <span className="text-gray-400">Full Name:</span>
+                                                    <p className="font-medium">{submission.fullName}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-gray-400">Document Number:</span>
+                                                    <p className="font-medium">{submission.documentNumber}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-gray-400">Date of Birth:</span>
+                                                    <p className="font-medium">{new Date(submission.dateOfBirth).toLocaleDateString()}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-gray-400">Address:</span>
+                                                    <p className="font-medium text-xs">{submission.address}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {submission.adminRemarks && (
+                                        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded">
+                                            <p className="text-xs font-semibold text-red-400 mb-1">Admin Remarks:</p>
+                                            <p className="text-sm text-red-200">{submission.adminRemarks}</p>
+                                        </div>
+                                    )}
+
+                                    {submission.status !== 'approved' && submission.status !== 'rejected' && (
+                                        <div className="mt-4 pt-4 border-t border-white/10">
+                                            <button
+                                                onClick={() => setSelectedForReview(submission._id)}
+                                                className="w-full px-4 py-2 bg-accent/20 hover:bg-accent/30 border border-accent/50 text-accent rounded font-medium text-sm transition"
+                                            >
+                                                {selectedForReview === submission._id ? '✖ Hide Review' : '📋 Review & Take Action'}
+                                            </button>
+
+                                            {selectedForReview === submission._id && (
+                                                <div className="mt-4 space-y-3 p-4 bg-white/5 border border-white/10 rounded-lg">
+                                                    <div>
+                                                        <label className="text-xs text-gray-400 block mb-2 font-semibold">Remarks (required for rejection):</label>
+                                                        <textarea
+                                                            value={rejectRemarks}
+                                                            onChange={(e) => setRejectRemarks(e.target.value)}
+                                                            placeholder="Enter rejection reason or comments..."
+                                                            className="w-full bg-white/5 border border-white/20 rounded p-3 text-sm text-white placeholder-gray-500 focus:border-accent focus:outline-none focus:bg-white/10"
+                                                            rows={4}
+                                                        />
+                                                    </div>
+                                                    <div className="flex gap-3">
+                                                        <button
+                                                            onClick={() => handleApproveKYC(submission.userId._id)}
+                                                            disabled={actionLoading}
+                                                            className="flex-1 px-4 py-3 bg-green-500/20 border border-green-500/60 text-green-300 rounded font-semibold text-sm hover:bg-green-500/30 hover:border-green-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                                                        >
+                                                            <CheckCircle size={18} />
+                                                            {actionLoading ? 'Processing...' : 'Approve KYC'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleRejectKYC(submission.userId._id)}
+                                                            disabled={actionLoading || !rejectRemarks.trim()}
+                                                            className="flex-1 px-4 py-3 bg-red-500/20 border border-red-500/60 text-red-300 rounded font-semibold text-sm hover:bg-red-500/30 hover:border-red-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                                                        >
+                                                            <XCircle size={18} />
+                                                            {actionLoading ? 'Processing...' : 'Reject KYC'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {submission.status === 'approved' && (
+                                        <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded flex items-center gap-2">
+                                            <CheckCircle size={18} className="text-green-400" />
+                                            <span className="text-sm text-green-300">KYC Verified on {new Date(submission.reviewedAt).toLocaleDateString()}</span>
+                                        </div>
+                                    )}
+
+                                    {submission.status === 'rejected' && (
+                                        <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded flex items-center gap-2">
+                                            <XCircle size={18} className="text-red-400" />
+                                            <span className="text-sm text-red-300">Rejected on {new Date(submission.reviewedAt).toLocaleDateString()}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
 
 export default AdminDashboard;

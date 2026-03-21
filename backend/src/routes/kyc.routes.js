@@ -1,77 +1,91 @@
 import express from "express";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import { protect } from "../middleware/auth.middleware.js";
-import User from "../models/User.js";
+import {
+  submitKYC,
+  getKYCStatus,
+} from "../controllers/kyc.controller.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
-// PAN format: 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)
-function isValidPAN(pan) {
-  return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(pan);
-}
-// Aadhaar format: 12 digits
-function isValidAadhaar(aadhaar) {
-  return /^[0-9]{12}$/.test(aadhaar);
-}
-
-// Submit KYC
-router.post("/submit", protect, async (req, res) => {
-  const { panNumber, aadhaarNumber } = req.body;
-  if (!panNumber && !aadhaarNumber) {
-    return res.status(400).json({ message: "PAN or Aadhaar required" });
-  }
-
-  let status = "pending";
-  let reason = "";
-
-  if (panNumber && !isValidPAN(panNumber)) {
-    status = "rejected";
-    reason = "Invalid PAN format";
-  }
-  if (aadhaarNumber && !isValidAadhaar(aadhaarNumber)) {
-    status = "rejected";
-    reason = "Invalid Aadhaar format";
-  }
-
-  // Simulate verification delay
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-
-  // If valid, mark as verified
-  if (status === "pending") {
-    status = "verified";
-    reason = "KYC verified (simulated)";
-  }
-
-  // Update user
-  const user = await User.findById(req.user._id);
-  user.kycStatus = status;
-  user.panNumber = panNumber || user.panNumber;
-  user.aadhaarNumber = aadhaarNumber || user.aadhaarNumber;
-  user.kycVerifiedAt = status === "verified" ? new Date() : undefined;
-  user.kycAttempts = (user.kycAttempts || 0) + 1;
-  user.kycHistory = user.kycHistory || [];
-  user.kycHistory.push({
-    submittedAt: new Date(),
-    panNumber,
-    aadhaarNumber,
-    status,
-    reason,
-  });
-  await user.save();
-
-  res.json({ success: true, status, reason });
+// ─── Multer Configuration ──────────────────────────────────
+// Storage engine: save to uploads/kyc/{userId}/
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "../../uploads/kyc", req.user._id.toString());
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // e.g., docFront-1000.jpg
+    const timestamp = Date.now();
+    const ext = path.extname(file.originalname);
+    cb(null, `${file.fieldname}-${timestamp}${ext}`);
+  },
 });
 
-// Get KYC status
-router.get("/status", protect, async (req, res) => {
-  const user = await User.findById(req.user._id);
-  res.json({
-    kycStatus: user.kycStatus,
-    panNumber: user.panNumber,
-    aadhaarNumber: user.aadhaarNumber,
-    kycVerifiedAt: user.kycVerifiedAt,
-    kycAttempts: user.kycAttempts,
-    kycHistory: user.kycHistory,
-  });
+// File filter: only jpg, jpeg, png, pdf
+const fileFilter = (req, file, cb) => {
+  const allowedMimes = ["image/jpeg", "image/png", "application/pdf"];
+  if (allowedMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Only JPG, PNG, and PDF files are allowed"), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
 });
+
+// Middleware to handle multer errors
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ message: "File size exceeds 5MB limit" });
+    }
+  }
+  if (err?.message) {
+    return res.status(400).json({ message: err.message });
+  }
+  next();
+};
+
+// ─── User Routes ────────────────────────────────────
+
+/**
+ * POST /kyc/submit
+ * Submit KYC with documents
+ * Expects: multipart/form-data with:
+ *   - fullName, dateOfBirth, address, documentType, documentNumber (text fields)
+ *   - docFront, docBack, selfie (file uploads)
+ */
+router.post(
+  "/submit",
+  protect,
+  upload.fields([
+    { name: "docFront", maxCount: 1 },
+    { name: "docBack", maxCount: 1 },
+    { name: "selfie", maxCount: 1 },
+  ]),
+  handleMulterError,
+  submitKYC
+);
+
+/**
+ * GET /kyc/status
+ * Get current user's KYC status
+ */
+router.get("/status", protect, getKYCStatus);
 
 export default router;

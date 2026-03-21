@@ -1,0 +1,601 @@
+/* ─────────────────────────────────────────────────────────────────────
+   KYC Wizard Styles — Dark Purple/Black Theme
+───────────────────────────────────────────────────────────────────── */
+
+.kyc-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0f0c29 0%, #1a1640 50%, #16213e 100%);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.kyc-header {
+  text-align: center;
+  margin-bottom: 3rem;
+  animation: fadeInDown 0.6s ease-out;
+}
+
+.kyc-header h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin: 0;
+  background: linear-gradient(135deg, #a78bfa 0%, #c084fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.kyc-header p {
+  font-size: 1rem;
+  color: #b0b0b0;
+  margin-top: 0.5rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Progress Bar & Step Indicators
+───────────────────────────────────────────────────────────────────── */
+
+.kyc-progress-wrapper {
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 3rem;
+}
+
+.kyc-progress-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 2rem;
+}
+
+.kyc-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a78bfa 0%, #c084fc 100%);
+  border-radius: 3px;
+}
+
+.kyc-step-indicators {
+  display: flex;
+  justify-content: space-around;
+  gap: 1rem;
+}
+
+.step-indicator {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 2px solid rgba(167, 139, 250, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 1rem;
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.05);
+  transition: all 0.3s ease;
+}
+
+.step-indicator.active {
+  border-color: #a78bfa;
+  background: rgba(167, 139, 250, 0.15);
+  box-shadow: 0 0 20px rgba(167, 139, 250, 0.3);
+  color: #c084fc;
+}
+
+.step-indicator.completed {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: #22c55e;
+  color: #22c55e;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Form Container
+───────────────────────────────────────────────────────────────────── */
+
+.kyc-form-container {
+  width: 100%;
+  max-width: 600px;
+  background: rgba(30, 30, 50, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  border-radius: 16px;
+  padding: 3rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.kyc-step h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 2rem;
+  color: #f0f0f0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Form Groups
+───────────────────────────────────────────────────────────────────── */
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  color: #d0d0d0;
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  border-radius: 8px;
+  color: #e0e0e0;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+}
+
+.form-group input::placeholder {
+  color: #808080;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #a78bfa;
+  background: rgba(167, 139, 250, 0.1);
+  box-shadow: 0 0 16px rgba(167, 139, 250, 0.2);
+}
+
+.form-group select {
+  cursor: pointer;
+}
+
+.form-group select option {
+  background: #1a1640;
+  color: #e0e0e0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Form Row (Two Columns)
+───────────────────────────────────────────────────────────────────── */
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 600px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Document Upload Section
+───────────────────────────────────────────────────────────────────── */
+
+.document-upload-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 600px) {
+  .document-upload-section {
+    grid-template-columns: 1fr;
+  }
+}
+
+.upload-box {
+  position: relative;
+}
+
+.upload-box label {
+  display: block;
+  cursor: pointer;
+}
+
+.upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  border: 2px dashed rgba(167, 139, 250, 0.4);
+  border-radius: 12px;
+  background: rgba(167, 139, 250, 0.05);
+  transition: all 0.3s ease;
+  color: #b0b0b0;
+}
+
+.upload-placeholder:hover {
+  border-color: #a78bfa;
+  background: rgba(167, 139, 250, 0.1);
+}
+
+.upload-placeholder svg {
+  color: #a78bfa;
+  margin-bottom: 0.5rem;
+}
+
+.upload-placeholder p {
+  font-weight: 500;
+  margin: 0.5rem 0 0;
+  color: #d0d0d0;
+}
+
+.upload-placeholder span {
+  font-size: 0.8rem;
+  color: #808080;
+  margin-top: 0.25rem;
+}
+
+.preview-wrapper {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.preview-wrapper img {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  display: block;
+}
+
+.remove-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.9);
+  border: none;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.remove-btn:hover {
+  background: #ef4444;
+  transform: scale(1.1);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Selfie Options
+───────────────────────────────────────────────────────────────────── */
+
+.selfie-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  border: 2px solid rgba(167, 139, 250, 0.3);
+  border-radius: 12px;
+  background: rgba(167, 139, 250, 0.05);
+  color: #d0d0d0;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.option-btn:hover {
+  border-color: #a78bfa;
+  background: rgba(167, 139, 250, 0.15);
+}
+
+.option-btn svg {
+  color: #a78bfa;
+  margin-bottom: 0.75rem;
+}
+
+.or-divider {
+  text-align: center;
+  color: #808080;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Webcam Section
+───────────────────────────────────────────────────────────────────── */
+
+.webcam-section {
+  margin-bottom: 2rem;
+}
+
+.webcam-feed {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto 1.5rem;
+  border-radius: 12px;
+  border: 2px solid rgba(167, 139, 250, 0.3);
+  background: #000;
+}
+
+.webcam-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-capture,
+.btn-cancel {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.btn-capture {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.btn-capture:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3);
+}
+
+.btn-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: #d0d0d0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Selfie Preview Section
+───────────────────────────────────────────────────────────────────── */
+
+.selfie-preview-section {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.selfie-preview {
+  width: 100%;
+  max-width: 300px;
+  height: 300px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 2px solid rgba(167, 139, 250, 0.3);
+  margin-bottom: 1rem;
+}
+
+.btn-retake {
+  padding: 0.75rem 1.5rem;
+  background: rgba(167, 139, 250, 0.2);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  color: #a78bfa;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.btn-retake:hover {
+  background: rgba(167, 139, 250, 0.3);
+  border-color: #a78bfa;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Info Box
+───────────────────────────────────────────────────────────────────── */
+
+.info-box {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  color: #93c5fd;
+  font-size: 0.9rem;
+  margin-bottom: 2rem;
+}
+
+.info-box svg {
+  flex-shrink: 0;
+  color: #3b82f6;
+}
+
+.info-box p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Form Footer (Navigation Buttons)
+───────────────────────────────────────────────────────────────────── */
+
+.kyc-form-footer {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid rgba(167, 139, 250, 0.2);
+}
+
+.btn-secondary,
+.btn-primary {
+  flex: 1;
+  padding: 0.875rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: #d0d0d0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #a78bfa 0%, #c084fc 100%);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(167, 139, 250, 0.3);
+}
+
+.btn-submit {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.btn-submit:hover:not(:disabled) {
+  box-shadow: 0 12px 24px rgba(16, 185, 129, 0.3);
+}
+
+.btn-secondary:disabled,
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Success Container
+───────────────────────────────────────────────────────────────────── */
+
+.kyc-success-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0f0c29 0%, #1a1640 50%, #16213e 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.kyc-success-card {
+  text-align: center;
+  background: rgba(30, 30, 50, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 16px;
+  padding: 3rem;
+  max-width: 500px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.success-icon {
+  color: #22c55e;
+  margin-bottom: 1.5rem;
+}
+
+.kyc-success-card h2 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #22c55e;
+  margin-bottom: 0.5rem;
+}
+
+.kyc-success-card p {
+  color: #b0b0b0;
+  margin: 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.status-text {
+  color: #a0a0a0;
+  font-size: 0.9rem;
+  margin-top: 1rem;
+}
+
+.redirect-text {
+  color: #808080;
+  font-size: 0.85rem;
+  margin-top: 1.5rem;
+  font-style: italic;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Animations
+───────────────────────────────────────────────────────────────────── */
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Responsive Design
+───────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 700px) {
+  .kyc-container {
+    padding: 1rem;
+  }
+
+  .kyc-header h1 {
+    font-size: 1.75rem;
+  }
+
+  .kyc-form-container {
+    padding: 1.5rem;
+  }
+
+  .kyc-form-footer {
+    flex-direction: column;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}

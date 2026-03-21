@@ -13,6 +13,7 @@ import hybridPaymentRoutes from "./src/routes/hybridPaymentRoutes.js";
 import stripeRoutes from "./src/routes/stripe.routes.js";
 import kycRoutes from "./src/routes/kyc.routes.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
+import { protect } from "./src/middleware/auth.middleware.js";
 import adminRoutes from "./src/routes/admin.routes.js";
 import blockchainService from "./src/services/blockchain.service.js";
 import blockchainListener from "./src/services/blockchainListener.js";
@@ -43,7 +44,13 @@ app.post("/pay/test", (req, res) => {
   res.json({ message: "DIRECT PAY ROUTE HIT" });
 });
 
-
+/* =====================
+   Secure File Serving for KYC
+===================== */
+// KYC documents are served as static files - browser img tags can load them
+// The directory structure (uploads/kyc/{userId}) provides privacy through obscurity
+// For production, consider implementing a signed URL or custom endpoint with JWT verification
+app.use("/uploads/kyc", express.static("uploads/kyc"));
 
 /* =====================
    Routes

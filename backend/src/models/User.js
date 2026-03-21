@@ -55,6 +55,10 @@ const userSchema = new mongoose.Schema(
     totalVolume: { type: Number, default: 0 },
 
     // ─── KYC ────────────────────────────────────────────────
+    kyc: {
+      type: Boolean,
+      default: false,
+    },
     kycStatus: {
       type: String,
       enum: ["pending", "verified", "rejected", "not_submitted"],
